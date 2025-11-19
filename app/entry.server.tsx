@@ -7,16 +7,8 @@ import {
 } from "@remix-run/node";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
-import { startWorkers, shouldRunWorkers } from "~/jobs/workers";
 
 export const streamTimeout = 5000;
-
-// Start BullMQ workers if enabled
-if (shouldRunWorkers()) {
-  startWorkers().catch((error) => {
-    console.error('Failed to start workers:', error);
-  });
-}
 
 export default async function handleRequest(
   request: Request,

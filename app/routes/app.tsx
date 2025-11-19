@@ -6,7 +6,6 @@ import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 
 import { authenticate } from "../shopify.server";
-import { DevTools } from "~/components/DevTools";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -25,12 +24,26 @@ export default function App() {
         <Link to="/app" rel="home">
           Dashboard
         </Link>
-        <Link to="/app/recipes">Recipes</Link>
-        <Link to="/app/activity">Activity Log</Link>
-        <Link to="/app/settings">Settings</Link>
+        <Link to="/app/tagger" rel="smart-tags">
+          Smart Tags
+        </Link>
+        <Link to="/app/cogs" rel="cogs">
+          COGS & Profit Tracking
+        </Link>
+        <Link to="/app/metafields" rel="metafields">
+          Metafield Manager
+        </Link>
+        <Link to="/app/bulk" rel="bulk">
+          Bulk Operations
+        </Link>
+        <Link to="/app/cleaner" rel="cleaner">
+          Data Cleaner
+        </Link>
+        <Link to="/app/activity" rel="activity">
+          Activity Log
+        </Link>
       </NavMenu>
       <Outlet />
-      <DevTools />
     </AppProvider>
   );
 }

@@ -5,6 +5,8 @@ import {
   shopifyApp,
 } from "@shopify/shopify-app-remix/server";
 import { RedisSessionStorage } from "@shopify/shopify-app-session-storage-redis";
+import { connectDB } from "./db.server";
+connectDB();
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
