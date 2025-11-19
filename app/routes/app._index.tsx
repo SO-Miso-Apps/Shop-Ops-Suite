@@ -23,9 +23,14 @@ import {
   Link,
   Badge,
   SkeletonBodyText,
-  Modal
+  Modal,
+  ResourceList,
+  ResourceItem,
+  Box,
+  EmptyState,
 } from '@shopify/polaris';
 import { TitleBar } from '@shopify/app-bridge-react';
+import { RefreshIcon } from '@shopify/polaris-icons';
 import { authenticate } from '../shopify.server';
 import { getDataService } from '~/services/data';
 import { StatsCard } from '~/components/StatsCard';
@@ -86,48 +91,55 @@ export default function Dashboard() {
   return (
     <Page>
       <TitleBar title="Dashboard">
-        <button onClick={handleRefresh} disabled={isRefreshing}>
+        <Button
+          icon={RefreshIcon}
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          ariaLabel={isRefreshing ? 'Refreshing data' : 'Refresh data'}
+        >
           {isRefreshing ? 'Refreshing...' : 'Refresh'}
-        </button>
+        </Button>
       </TitleBar>
 
       <BlockStack gap="500">
         {/* Stats Section */}
         <Layout>
           <Layout.Section>
-            <InlineStack gap="400" wrap>
-              <div style={{ flex: '1 1 0', minWidth: '240px' }}>
-                <StatsCard
-                  value={stats.activeRecipes}
-                  label="Active Recipes"
-                  viewAllUrl="/app/recipes"
-                  loading={isRefreshing}
-                />
-              </div>
-              <div style={{ flex: '1 1 0', minWidth: '240px' }}>
-                <StatsCard
-                  value={stats.executionsToday}
-                  label="Actions Today"
-                  viewAllUrl="/app/activity"
-                  loading={isRefreshing}
-                />
-              </div>
-              <div style={{ flex: '1 1 0', minWidth: '240px' }}>
-                <StatsCard
-                  value={`${stats.successRate}%`}
-                  label="Success Rate"
-                  loading={isRefreshing}
-                />
-              </div>
-              <div style={{ flex: '1 1 0', minWidth: '240px' }}>
-                <StatsCard
-                  value={stats.executionsThisMonth}
-                  label="Actions This Month"
-                  viewAllUrl="/app/activity"
-                  loading={isRefreshing}
-                />
-              </div>
-            </InlineStack>
+            <Card>
+              <InlineStack gap="400" wrap>
+                <Box minInlineSize="240px" flexGrow="1">
+                  <StatsCard
+                    value={stats.activeRecipes}
+                    label="Active Recipes"
+                    viewAllUrl="/app/recipes"
+                    loading={isRefreshing}
+                  />
+                </Box>
+                <Box minInlineSize="240px" flexGrow="1">
+                  <StatsCard
+                    value={stats.executionsToday}
+                    label="Actions Today"
+                    viewAllUrl="/app/activity"
+                    loading={isRefreshing}
+                  />
+                </Box>
+                <Box minInlineSize="240px" flexGrow="1">
+                  <StatsCard
+                    value={`${stats.successRate}%`}
+                    label="Success Rate"
+                    loading={isRefreshing}
+                  />
+                </Box>
+                <Box minInlineSize="240px" flexGrow="1">
+                  <StatsCard
+                    value={stats.executionsThisMonth}
+                    label="Actions This Month"
+                    viewAllUrl="/app/activity"
+                    loading={isRefreshing}
+                  />
+                </Box>
+              </InlineStack>
+            </Card>
           </Layout.Section>
         </Layout>
 
@@ -135,76 +147,101 @@ export default function Dashboard() {
         <Layout>
           {/* Active Recipes Column */}
           <Layout.Section variant="oneHalf">
-            <Card>
-              <BlockStack gap="400">
-                <Text variant="headingMd" as="h2">
-                  Active Recipes
-                </Text>
-
-                {isRefreshing ? (
-                  <SkeletonBodyText lines={5} />
-                ) : activeRecipes.length === 0 ? (
-                  <EmptyStateActiveRecipes />
-                ) : (
-                  <BlockStack gap="300">
-                    {activeRecipes.map((recipe: MockRecipe) => (
-                      <InlineStack key={recipe.recipeId} align="space-between" blockAlign="center">
-                        <Text variant="bodyMd" as="p">
-                          {recipe.title}
-                        </Text>
-                        <Badge tone="success">Active</Badge>
-                      </InlineStack>
-                    ))}
-                  </BlockStack>
-                )}
-
-                <div style={{ paddingTop: '8px' }}>
-                  <Link url="/app/recipes" removeUnderline>
-                    Manage Recipes →
-                  </Link>
-                </div>
-              </BlockStack>
+            <Card
+              title="Active Recipes"
+              actions={[{ content: 'View all', url: '/app/recipes' }]}
+            >
+              {isRefreshing ? (
+                <SkeletonBodyText lines={5} />
+              ) : activeRecipes.length === 0 ? (
+                <EmptyState
+                  heading="No active recipes yet"
+                  image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                  imageContained={true}
+                  fullWidth={true}
+                >
+                  <Text variant="bodyMd" as="p" tone="subdued">
+                    Browse the recipe library to get started with automation.
+                  </Text>
+                  <RemixLink to="/app/recipes">
+                    <Button primary>Browse Recipes</Button>
+                  </RemixLink>
+                </EmptyState>
+              ) : (
+                <ResourceList
+                  resourceName={{ singular: 'recipe', plural: 'recipes' }}
+                  items={activeRecipes}
+                  renderItem={(recipe: MockRecipe) => {
+                    const { recipeId, title } = recipe;
+                    return (
+                      <ResourceItem
+                        id={recipeId}
+                        url={`/app/recipes/${recipeId}`}
+                        accessibilityLabel={`View details for ${title}`}
+                      >
+                        <InlineStack align="space-between" blockAlign="center">
+                          <Text variant="bodyMd" as="p" fontWeight="semibold">
+                            {title}
+                          </Text>
+                          <Badge tone="success">Active</Badge>
+                        </InlineStack>
+                      </ResourceItem>
+                    );
+                  }}
+                />
+              )}
             </Card>
           </Layout.Section>
 
           {/* Recent Activity Column */}
           <Layout.Section variant="oneHalf">
-            <Card>
-              <BlockStack gap="400">
-                <Text variant="headingMd" as="h2">
-                  Recent Activity
-                </Text>
-
-                {isRefreshing ? (
-                  <SkeletonBodyText lines={10} />
-                ) : recentActivity.length === 0 ? (
-                  <EmptyStateActivity />
-                ) : (
-                  <BlockStack gap="200">
-                    {recentActivity.map((log: MockAutomationLog) => (
-                      <BlockStack key={log.logId} gap="100">
-                        <InlineStack gap="200" blockAlign="center">
-                          <Text variant="bodySm" as="span" tone="subdued">
-                            {formatRelativeTime(log.createdAt)}
+            <Card
+              title="Recent Activity"
+              actions={[{ content: 'View all', url: '/app/activity' }]}
+            >
+              {isRefreshing ? (
+                <SkeletonBodyText lines={10} />
+              ) : recentActivity.length === 0 ? (
+                <EmptyState
+                  heading="No activity yet"
+                  image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-blog-post.png"
+                  imageContained={true}
+                  fullWidth={true}
+                >
+                  <Text variant="bodyMd" as="p" tone="subdued">
+                    Actions will appear here once you activate a recipe.
+                  </Text>
+                </EmptyState>
+              ) : (
+                <ResourceList
+                  resourceName={{ singular: 'log entry', plural: 'log entries' }}
+                  items={recentActivity}
+                  renderItem={(log: MockAutomationLog) => {
+                    const { logId, recipeTitle, resourceTitle, status, createdAt } = log;
+                    return (
+                      <ResourceItem
+                        id={logId}
+                        url={`/app/activity/${logId}`}
+                        accessibilityLabel={`View details for activity log ${logId}`}
+                      >
+                        <BlockStack gap="100">
+                          <InlineStack gap="200" blockAlign="center">
+                            <Text variant="bodySm" as="span" tone="subdued">
+                              {formatRelativeTime(createdAt)}
+                            </Text>
+                            <Badge tone={status === 'success' ? 'success' : status === 'failure' ? 'critical' : 'warning'}>
+                              {status}
+                            </Badge>
+                          </InlineStack>
+                          <Text variant="bodyMd" as="p" fontWeight="semibold">
+                            {recipeTitle} → {resourceTitle}
                           </Text>
-                          <Badge tone={log.status === 'success' ? 'success' : log.status === 'failure' ? 'critical' : 'warning'}>
-                            {log.status}
-                          </Badge>
-                        </InlineStack>
-                        <Text variant="bodyMd" as="p">
-                          {log.recipeTitle} → {log.resourceTitle}
-                        </Text>
-                      </BlockStack>
-                    ))}
-                  </BlockStack>
-                )}
-
-                <div style={{ paddingTop: '8px' }}>
-                  <Link url="/app/activity" removeUnderline>
-                    View All Activity →
-                  </Link>
-                </div>
-              </BlockStack>
+                        </BlockStack>
+                      </ResourceItem>
+                    );
+                  }}
+                />
+              )}
             </Card>
           </Layout.Section>
         </Layout>
@@ -212,15 +249,14 @@ export default function Dashboard() {
         {/* Quick Actions Section */}
         <Layout>
           <Layout.Section>
-            <Card>
+            <Card title="Quick Actions">
               <BlockStack gap="400">
-                <Text variant="headingMd" as="h2">
-                  Quick Actions
+                <Text variant="bodyMd" as="p" tone="subdued">
+                  Perform common tasks quickly.
                 </Text>
-
                 <InlineStack gap="300" wrap>
                   <RemixLink to="/app/recipes">
-                    <Button>+ Add Recipe</Button>
+                    <Button primary>+ Add Recipe</Button>
                   </RemixLink>
                   <Button onClick={() => setShowComingSoonModal(true)}>
                     🧹 Clean Tags
@@ -255,45 +291,3 @@ export default function Dashboard() {
   );
 }
 
-/**
- * Empty State - Active Recipes
- */
-function EmptyStateActiveRecipes() {
-  return (
-    <div style={{ textAlign: 'center', padding: '32px 0' }}>
-      <BlockStack gap="300">
-        <div style={{ fontSize: '48px' }}>📋</div>
-        <Text variant="headingSm" as="p">
-          No active recipes yet
-        </Text>
-        <Text variant="bodyMd" as="p" tone="subdued">
-          Browse the recipe library to get started with automation
-        </Text>
-        <div>
-          <RemixLink to="/app/recipes">
-            <Button>Browse Recipes</Button>
-          </RemixLink>
-        </div>
-      </BlockStack>
-    </div>
-  );
-}
-
-/**
- * Empty State - Recent Activity
- */
-function EmptyStateActivity() {
-  return (
-    <div style={{ textAlign: 'center', padding: '32px 0' }}>
-      <BlockStack gap="300">
-        <div style={{ fontSize: '48px' }}>📊</div>
-        <Text variant="headingSm" as="p">
-          No activity yet
-        </Text>
-        <Text variant="bodyMd" as="p" tone="subdued">
-          Actions will appear here once you activate a recipe
-        </Text>
-      </BlockStack>
-    </div>
-  );
-}
