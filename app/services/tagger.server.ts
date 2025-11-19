@@ -1,5 +1,5 @@
 import { unauthenticated } from "../shopify.server";
-import { TaggingRule, ActivityLog } from "../db.server";
+import { TaggingRule, ActivityLog, MetafieldRule } from "../db.server";
 
 export async function processWebhookJob(job: any) {
     const { shop, topic, payload } = job.data;
@@ -12,27 +12,33 @@ export async function processWebhookJob(job: any) {
             throw new Error(`Could not get admin client for ${shop}`);
         }
 
-        // Fetch active rules for this shop
-        const rules = await TaggingRule.find({ shop, isEnabled: true });
-        if (rules.length === 0) {
-            console.log("No active rules for shop");
-            return;
+        // 1. Xử lý Tagging Rules (Smart Tagger - Logic cũ vẫn giữ nguyên)
+        const taggingRules = await TaggingRule.find({ shop, isEnabled: true });
+        if (taggingRules.length > 0) {
+            if (topic === "ORDERS_CREATE" || topic === "ORDERS_UPDATED") {
+                await evaluateOrderRules(admin, shop, payload, taggingRules);
+            } else if (topic === "CUSTOMERS_UPDATE") {
+                await evaluateCustomerRules(admin, shop, payload, taggingRules);
+            }
         }
 
-        // Evaluate rules based on topic
-        if (topic === "ORDERS_CREATE" || topic === "ORDERS_UPDATED") {
-            await evaluateOrderRules(admin, shop, payload, rules);
-        } else if (topic === "CUSTOMERS_UPDATE") {
-            await evaluateCustomerRules(admin, shop, payload, rules);
-        } else if (topic === "PRODUCTS_CREATE") {
-            await applyDefaultMetafields(admin, shop, payload, "products");
-        } else if (topic === "CUSTOMERS_CREATE") {
-            await applyDefaultMetafields(admin, shop, payload, "customers");
+        // 2. Xử lý Metafield Rules (NEW Logic)
+        if (topic === "PRODUCTS_CREATE" || topic === "PRODUCTS_UPDATE") {
+            // Chuẩn hóa payload sản phẩm một chút để dễ truy cập
+            const normalizedPayload = {
+                ...payload,
+                price: payload.variants?.[0]?.price, // Flatten price để dễ đặt rule
+                sku: payload.variants?.[0]?.sku,
+                inventory: payload.variants?.[0]?.inventory_quantity
+            };
+            await evaluateMetafieldRules(admin, shop, normalizedPayload, "products");
+        }
+        else if (topic === "CUSTOMERS_CREATE" || topic === "CUSTOMERS_UPDATE") {
+            await evaluateMetafieldRules(admin, shop, payload, "customers");
         }
 
     } catch (error) {
         console.error(`Error processing webhook ${topic}:`, error);
-        // Log failure
         await ActivityLog.create({
             shop,
             resourceType: 'System',
@@ -41,9 +47,10 @@ export async function processWebhookJob(job: any) {
             detail: `Failed to process ${topic}: ${(error as Error).message}`,
             status: 'Failed',
         });
-        throw error; // Retry job
+        throw error; // Retry job via Queue
     }
 }
+
 
 async function evaluateOrderRules(admin: any, shop: string, order: any, rules: any[]) {
     const tagsToAdd: string[] = [];
@@ -210,59 +217,165 @@ async function evaluateCustomerRules(admin: any, shop: string, customer: any, ru
     }
 }
 
-async function applyDefaultMetafields(admin: any, shop: string, resource: any, resourceType: "products" | "customers") {
-    const { MetafieldConfig } = await import("../db.server");
 
-    const configs = await MetafieldConfig.find({ shop, resourceType });
-    if (configs.length === 0) return;
+interface WebhookPayload {
+    id: number | string;
+    [key: string]: any;
+}
 
-    const ownerId = resourceType === "products"
-        ? `gid://shopify/Product/${resource.id}`
-        : `gid://shopify/Customer/${resource.id}`;
+export async function evaluateMetafieldRules(
+    admin: any,
+    shop: string,
+    resource: WebhookPayload,
+    resourceType: "products" | "customers"
+) {
 
-    const metafields = configs.map((config: any) => ({
-        namespace: config.namespace,
-        key: config.key,
-        value: config.defaultValue,
-        type: "single_line_text_field",
-        ownerId: ownerId
-    }));
+    const rules = await MetafieldRule.find({
+        shop,
+        resourceType,
+        isEnabled: true
+    }).sort({ priority: -1 });
 
-    const mutation = `#graphql
-    mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-      metafieldsSet(metafields: $metafields) {
-        metafields {
-          id
-        }
-        userErrors {
-          message
-        }
-      }
+    if (rules.length === 0) {
+        console.log(`ℹ No active rules found for ${resourceType}`);
+        return;
     }
-  `;
 
+
+    const mutationsToRun: any[] = [];
+
+    for (const rule of rules) {
+        const isMatch = checkConditions(resource, rule.conditions);
+
+        if (isMatch) {
+
+            const ownerId = resourceType === "products"
+                ? `gid://shopify/Product/${resource.id}`
+                : `gid://shopify/Customer/${resource.id}`;
+
+            // Push to array for batch update
+            mutationsToRun.push({
+                metafield: {
+                    namespace: rule.definition.namespace,
+                    key: rule.definition.key,
+                    value: rule.definition.value,
+                    type: rule.definition.valueType,
+                    ownerId: ownerId
+                },
+                ruleName: rule.name
+            });
+        } else {
+            // console.log(`❌ Rule MISMATCH: "${rule.name}"`); // Uncomment if too verbose
+        }
+    }
+
+
+    if (mutationsToRun.length > 0) {
+        // Map to GraphQL input format
+        const metafieldsInput = mutationsToRun.map(m => m.metafield);
+
+        // Log input for debugging
+
+        const mutation = `#graphql
+        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) {
+                metafields {
+                    id
+                    namespace
+                    key
+                    value
+                }
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+        `;
+
+        try {
+            const response = await admin.graphql(mutation, {
+                variables: { metafields: metafieldsInput }
+            });
+
+            const data = await response.json();
+            if (data.data?.metafieldsSet?.userErrors?.length > 0) {
+                const errors = JSON.stringify(data.data.metafieldsSet.userErrors);
+                console.error(`⚠ Shopify API UserErrors: ${errors}`);
+                throw new Error(`Shopify UserErrors: ${errors}`);
+            }
+
+
+            await ActivityLog.create({
+                shop,
+                resourceType: resourceType === "products" ? "Product" : "Customer",
+                resourceId: resource.id.toString(),
+                action: "Auto-Metafield",
+                detail: `Applied rules: ${mutationsToRun.map(m => m.ruleName).join(", ")}`,
+                status: "Success",
+            });
+
+        } catch (error) {
+            console.error("❌ Error executing metafieldsSet mutation:", error);
+            await ActivityLog.create({
+                shop,
+                resourceType: resourceType === "products" ? "Product" : "Customer",
+                resourceId: resource.id.toString(),
+                action: "Auto-Metafield",
+                detail: `Failed: ${(error as Error).message}`,
+                status: "Failed",
+            });
+        }
+    } else {
+        console.log("ℹ No rules matched, skipping GraphQL update.");
+    }
+
+}
+
+function checkConditions(resource: any, conditions: any[]): boolean {
+    if (!conditions || conditions.length === 0) {
+        return true;
+    }
+
+    return conditions.every(condition => {
+        const resourceValue = getNestedValue(resource, condition.field);
+        const targetValue = condition.value;
+
+        const numResource = parseFloat(resourceValue);
+        const numTarget = parseFloat(targetValue);
+        const isNumberCompare = !isNaN(numResource) && !isNaN(numTarget);
+
+        let result = false;
+
+        switch (condition.operator) {
+            case 'equals':
+                result = String(resourceValue).toLowerCase() === String(targetValue).toLowerCase();
+                break;
+            case 'not_equals':
+                result = String(resourceValue).toLowerCase() !== String(targetValue).toLowerCase();
+                break;
+            case 'contains':
+                result = String(resourceValue).toLowerCase().includes(String(targetValue).toLowerCase());
+                break;
+            case 'starts_with':
+                result = String(resourceValue).toLowerCase().startsWith(String(targetValue).toLowerCase());
+                break;
+            case 'greater_than':
+                result = isNumberCompare && numResource > numTarget;
+                break;
+            case 'less_than':
+                result = isNumberCompare && numResource < numTarget;
+                break;
+        }
+
+        return result;
+    });
+}
+
+function getNestedValue(obj: any, path: string) {
     try {
-        await admin.graphql(mutation, {
-            variables: { metafields }
-        });
-
-        await ActivityLog.create({
-            shop,
-            resourceType: resourceType === "products" ? "Product" : "Customer",
-            resourceId: resource.id.toString(),
-            action: "Auto-Fill Metafield",
-            detail: `Applied ${metafields.length} default metafields`,
-            status: "Success",
-        });
-    } catch (error) {
-        console.error("Error applying metafields:", error);
-        await ActivityLog.create({
-            shop,
-            resourceType: resourceType === "products" ? "Product" : "Customer",
-            resourceId: resource.id.toString(),
-            action: "Auto-Fill Metafield",
-            detail: `Failed: ${(error as Error).message}`,
-            status: "Failed",
-        });
+        return path.split('.').reduce((acc, part) => acc && acc[part], obj) ?? "";
+    } catch (e) {
+        return "";
     }
 }
