@@ -67,3 +67,11 @@ export async function disconnectFromMongoDB() {
 
 // Export mongoose instance for model definitions
 export { mongoose };
+
+// Preload all models to ensure they're registered with Mongoose
+// This prevents "Model not registered" errors when using models in routes/services
+import '~/models/Recipe';
+import '~/models/Setting';
+import '~/models/AutomationLog';
+import '~/models/Shop';
+import '~/models/JobMetric';
