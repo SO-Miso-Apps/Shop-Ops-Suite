@@ -1,5 +1,4 @@
-import { Schema, model, Document } from 'mongoose';
-import type mongoose from 'mongoose';
+import mongoose, { Schema, model, Document } from 'mongoose';
 
 /**
  * Log type enumeration.
@@ -327,7 +326,7 @@ AutomationLogSchema.statics.findByRecipe = function (
 };
 
 // Export model
-export const AutomationLog = model<IAutomationLog, IAutomationLogModel>(
+export const AutomationLog = mongoose.models['AutomationLogs'] || model<IAutomationLog, IAutomationLogModel>(
   'AutomationLog',
   AutomationLogSchema
 );

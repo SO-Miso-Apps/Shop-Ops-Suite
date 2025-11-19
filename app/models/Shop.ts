@@ -1,5 +1,4 @@
-import { Schema, model, Document } from 'mongoose';
-import type mongoose from 'mongoose';
+import mongoose, { Schema, model, Document } from 'mongoose';
 
 /**
  * App installation status enumeration.
@@ -269,5 +268,5 @@ ShopSchema.methods.markUninstalled = async function (): Promise<IShop> {
 };
 
 // Export model
-export const Shop = model<IShop, IShopModel>('Shop', ShopSchema);
+export const Shop = mongoose.models['Shops'] || model<IShop, IShopModel>('Shop', ShopSchema);
 export default Shop;

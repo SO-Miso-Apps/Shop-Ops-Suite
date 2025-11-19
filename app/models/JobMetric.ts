@@ -1,5 +1,4 @@
-import { Schema, model, Document } from 'mongoose';
-import type mongoose from 'mongoose';
+import mongoose, { Schema, model, Document } from 'mongoose';
 
 /**
  * Job metrics for monitoring and analytics.
@@ -181,7 +180,7 @@ JobMetricSchema.statics.updateMetrics = async function (params: {
   await metric.save();
 };
 
-export const JobMetric = model<IJobMetric, IJobMetricModel>(
+export const JobMetric = mongoose.models['JobMetrics'] || model<IJobMetric, IJobMetricModel>(
   'JobMetric',
   JobMetricSchema
 );

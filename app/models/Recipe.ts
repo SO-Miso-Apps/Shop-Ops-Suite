@@ -1,5 +1,4 @@
-import { Schema, model, Document } from 'mongoose';
-import type mongoose from 'mongoose';
+import mongoose, { Schema, model, Document } from 'mongoose';
 
 /**
  * Recipe category enumeration.
@@ -367,5 +366,5 @@ RecipeSchema.methods.toggleEnabled = async function (): Promise<IRecipe> {
 };
 
 // Export model
-export const Recipe = model<IRecipe, IRecipeModel>('Recipe', RecipeSchema);
+export const Recipe = mongoose.models['Recipes'] || model<IRecipe, IRecipeModel>('Recipe', RecipeSchema);
 export default Recipe;

@@ -1,5 +1,4 @@
-import { Schema, model, Document } from 'mongoose';
-import type mongoose from 'mongoose';
+import mongoose, { Schema, model, Document } from 'mongoose';
 import crypto from 'crypto';
 
 /**
@@ -404,5 +403,5 @@ SettingSchema.methods.isTrialExpired = function (): boolean {
 };
 
 // Export model
-export const Setting = model<ISetting, ISettingModel>('Setting', SettingSchema);
+export const Setting = mongoose.models['Settings'] || model<ISetting, ISettingModel>('Setting', SettingSchema);
 export default Setting;
