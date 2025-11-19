@@ -2,6 +2,8 @@ import { vitePlugin as remix } from "@remix-run/dev";
 import { installGlobals } from "@remix-run/node";
 import { defineConfig, type UserConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
+import dotenv from "dotenv";
+dotenv.config();
 
 installGlobals({ nativeFetch: true });
 
@@ -30,9 +32,8 @@ if (host === "localhost") {
   };
 } else {
   hmrConfig = {
-    protocol: "wss",
-    host: host,
-    port: parseInt(process.env.FRONTEND_PORT!) || 8002,
+    path: '__vite_hmr',
+    port: 64999,
     clientPort: 443,
   };
 }
@@ -43,7 +44,7 @@ export default defineConfig({
     cors: {
       preflightContinue: true,
     },
-    port: Number(process.env.PORT || 3000),
+    port: Number(process.env.PORT || 5600),
     hmr: hmrConfig,
     fs: {
       // See https://vitejs.dev/config/server-options.html#server-fs-allow for more information

@@ -32,3 +32,7 @@ export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const registerWebhooks = shopify.registerWebhooks;
 export const sessionStorage = shopify.sessionStorage;
+
+// Type utilities for Shopify Admin API
+export type AdminApiContext = Awaited<ReturnType<typeof authenticate.admin>>;
+export type ShopifyAdminClient = AdminApiContext['admin'];
