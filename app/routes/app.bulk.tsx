@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, useActionData, Link } from "@remix-run/react";
 import {
@@ -17,6 +17,8 @@ import {
     InlineStack,
     ProgressBar,
     Box,
+    Autocomplete,
+    Icon,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { bulkQueue } from "../queue.server";
@@ -26,14 +28,38 @@ import { getPlan } from "~/utils/get-plan";
 import { generateJobId } from "~/utils/id-generator";
 
 export const loader = async ({ request }: { request: Request }) => {
-    const { session } = await authenticate.admin(request);
+    const { session, admin } = await authenticate.admin(request);
 
     // Get current usage stats
     const usage = await UsageService.getCurrentUsage(session.shop);
     const plan = await UsageService.getPlanType(session.shop);
     const limit = plan === "Free" ? 500 : null;
 
-    return json({ usage, plan, limit });
+    // Fetch existing tags from products (simplified approach for quick loading)
+    const tagsSet = new Set<string>();
+    try {
+        const response = await admin.graphql(`
+            query {
+                products(first: 250) {
+                    edges {
+                        node {
+                            tags
+                        }
+                    }
+                }
+            }
+        `);
+        const data = await response.json();
+        data.data.products.edges.forEach((edge: any) => {
+            edge.node.tags.forEach((tag: string) => tagsSet.add(tag));
+        });
+    } catch (error) {
+        console.error("Failed to fetch tags:", error);
+    }
+
+    const existingTags = Array.from(tagsSet).sort();
+
+    return json({ usage, plan, limit, existingTags });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -139,11 +165,41 @@ export default function BulkOperations() {
 
     const [showPreviewModal, setShowPreviewModal] = useState(false);
 
+    // Autocomplete state for Find Tag
+    const [findTagInputValue, setFindTagInputValue] = useState("");
+    const [findTagOptions, setFindTagOptions] = useState<Array<{ value: string; label: string }>>([]);
+
     useEffect(() => {
         if (isPreview) {
             setShowPreviewModal(true);
         }
     }, [isPreview]);
+
+    // Debounced autocomplete filtering
+    useEffect(() => {
+        const timeoutId = setTimeout(() => {
+            if (findTagInputValue === "") {
+                setFindTagOptions(
+                    loaderData.existingTags.slice(0, 10).map((tag: string) => ({
+                        value: tag,
+                        label: tag,
+                    }))
+                );
+            } else {
+                const filterRegex = new RegExp(findTagInputValue, "i");
+                const resultOptions = loaderData.existingTags
+                    .filter((tag: string) => tag.match(filterRegex))
+                    .slice(0, 10)
+                    .map((tag: string) => ({
+                        value: tag,
+                        label: tag,
+                    }));
+                setFindTagOptions(resultOptions);
+            }
+        }, 300); // 300ms debounce delay
+
+        return () => clearTimeout(timeoutId);
+    }, [findTagInputValue, loaderData.existingTags]);
 
     const handleDryRun = () => {
         const formDataObj = { ...formState, actionType: "dryRun" };
@@ -239,12 +295,26 @@ export default function BulkOperations() {
                                     onChange={(value) => setFormState({ ...formState, operation: value })}
                                 />
 
-                                <TextField
-                                    label={formState.operation === "add" ? "Tag to Add" : "Find Tag"}
-                                    value={formState.findTag}
-                                    onChange={(value) => setFormState({ ...formState, findTag: value })}
-                                    autoComplete="off"
-                                    helpText={formState.operation === "replace" ? "The tag you want to change." : undefined}
+                                <Autocomplete
+                                    options={findTagOptions}
+                                    selected={[]}
+                                    onSelect={(selected) => {
+                                        const selectedTag = selected[0];
+                                        setFormState({ ...formState, findTag: selectedTag });
+                                        setFindTagInputValue(selectedTag);
+                                    }}
+                                    textField={
+                                        <Autocomplete.TextField
+                                            label={formState.operation === "add" ? "Tag to Add" : "Find Tag"}
+                                            value={findTagInputValue}
+                                            onChange={(value) => {
+                                                setFindTagInputValue(value);
+                                                setFormState({ ...formState, findTag: value });
+                                            }}
+                                            autoComplete="off"
+                                            helpText={formState.operation === "replace" ? "The tag you want to change. Start typing to see suggestions." : "Start typing to see existing tags."}
+                                        />
+                                    }
                                 />
 
                                 {formState.operation === "replace" && (
