@@ -1,32 +1,42 @@
-
-
-import { useEffect } from "react";
-import { json } from "@remix-run/node";
+import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import {
-  Page,
-  Layout,
   BlockStack,
+  Box,
   CalloutCard,
   Card,
-  Text,
-  InlineGrid,
-  Box,
   Divider,
+  InlineGrid,
+  Layout,
+  Page,
+  Text,
 } from "@shopify/polaris";
-import { authenticate } from "../shopify.server";
 import { DashboardService } from "../services/dashboard.service";
+import { authenticate } from "../shopify.server";
 
-export const loader = async ({ request }: { request: Request }) => {
-  const { admin, session } = await authenticate.admin(request);
-  const data = await DashboardService.getDashboardData(admin, session.shop);
-  return json(data);
+import { Settings } from "../models/Settings";
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { session, redirect } = await authenticate.admin(request);
+
+  // Check Onboarding Status
+  const settings = await Settings.findOne({ shop: session.shop });
+  if (!settings || !settings.onboardingCompleted) {
+    console.log("redirecting to onboarding");
+    return redirect("/app/onboarding");
+  }
+
+  const { admin } = await authenticate.admin(request);
+  const dashboardData = await DashboardService.getDashboardData(admin, session.shop);
+
+  return json(dashboardData);
 };
 
 export default function Dashboard() {
   const { stats, suggestions } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
 
+  console.log("suggestions", suggestions);
   return (
     <Page title="Dashboard" subtitle="Shop-Ops Suite Overview">
       <BlockStack gap="500">
@@ -37,7 +47,7 @@ export default function Dashboard() {
               <StatsCard title="Active Rules" value={stats.activeRules.toString()} />
               <StatsCard title="Total Orders" value={stats.totalOrders.toString()} />
               <StatsCard title="Total Products" value={stats.totalProducts.toString()} />
-              <StatsCard title="Hours Saved" value={`${stats.savingsHours}h`} highlight />
+              <StatsCard title="Hours Saved" value={`${stats.savingsHours} h`} highlight />
             </InlineGrid>
           </Layout.Section>
 
@@ -47,7 +57,7 @@ export default function Dashboard() {
               AI Operations Advisor
             </Text>
             <Box paddingBlockStart="400">
-              <BlockStack gap="400">
+              <BlockStack>
                 {suggestions.length === 0 ? (
                   <CalloutCard
                     title="All systems operational"
@@ -68,8 +78,12 @@ export default function Dashboard() {
                       primaryAction={{
                         content: suggestion.action,
                         onAction: () => {
-                          if (suggestion.action === "Enable Rule") navigate("/app/tagger");
-                          if (suggestion.action === "Update COGS") navigate("/app/cogs");
+                          // Handle predefined actions
+                          if (suggestion.action === "Create Rule") navigate("/app/tagger");
+                          if (suggestion.action === "Update Costs") navigate("/app/cogs");
+                          if (suggestion.action === "Clean Tags") navigate("/app/cleaner");
+                          if (suggestion.action === "View Activity") navigate("/app/activity");
+                          // "Learn More" doesn't navigate anywhere
                         },
                       }}
                     >

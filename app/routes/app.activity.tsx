@@ -1,5 +1,5 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useSubmit } from "@remix-run/react";
 import {
     Page,
     Layout,
@@ -12,10 +12,14 @@ import {
     ChoiceList,
     type IndexFiltersProps,
     useSetIndexFiltersMode,
+    Button,
+    ButtonGroup,
 } from "@shopify/polaris";
 import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import { ActivityService } from "../services/activity.service";
+import { RevertService } from "../services/revert.service";
+import { Backup } from "../models/Backup";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { session } = await authenticate.admin(request);
@@ -23,13 +27,42 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Simple pagination (first 50) for MVP
     const logs = await ActivityService.getLogs(session.shop, 50);
 
+    // Check for backups
+    const logsWithBackup = await Promise.all(logs.map(async (log: any) => {
+        let hasBackup = false;
+        if (log.jobId && log.resourceId === "Bulk") {
+            const count = await Backup.countDocuments({ shop: session.shop, jobId: log.jobId });
+            hasBackup = count > 0;
+        }
+        return { ...log, hasBackup };
+    }));
+
     return json({
-        logs
+        logs: logsWithBackup
     });
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+    const { session } = await authenticate.admin(request);
+    const formData = await request.formData();
+    const actionType = formData.get("actionType");
+
+    if (actionType === "revert") {
+        const jobId = formData.get("jobId") as string;
+        try {
+            await RevertService.revertBackup(session.shop, jobId);
+            return json({ success: true, message: "Revert started" });
+        } catch (e) {
+            return json({ success: false, message: (e as Error).message }, { status: 400 });
+        }
+    }
+
+    return null;
 };
 
 export default function Activity() {
     const { logs } = useLoaderData<typeof loader>();
+    const submit = useSubmit();
 
     const resourceName = {
         singular: 'log',
@@ -57,6 +90,12 @@ export default function Activity() {
         handleFiltersQueryChange('');
         handleStatusFilterChange([]);
     }, [handleFiltersQueryChange, handleStatusFilterChange]);
+
+    const handleRevert = (jobId: string) => {
+        if (confirm("Are you sure you want to revert this bulk operation? This will restore the original tags.")) {
+            submit({ actionType: "revert", jobId }, { method: "post" });
+        }
+    };
 
     const filters = [
         {
@@ -98,7 +137,7 @@ export default function Activity() {
     });
 
     const rowMarkup = filteredLogs.map(
-        ({ id, resourceType, resourceId, action, detail, status, timestamp }: any, index: number) => (
+        ({ id, resourceType, resourceId, action, detail, status, timestamp, hasBackup, jobId }: any, index: number) => (
             <IndexTable.Row
                 id={id}
                 key={id}
@@ -119,6 +158,11 @@ export default function Activity() {
                 </IndexTable.Cell>
                 <IndexTable.Cell>
                     {new Date(timestamp).toLocaleString()}
+                </IndexTable.Cell>
+                <IndexTable.Cell>
+                    {hasBackup && (
+                        <Button size="micro" onClick={() => handleRevert(jobId)}>Revert</Button>
+                    )}
                 </IndexTable.Cell>
             </IndexTable.Row>
         ),
@@ -152,6 +196,7 @@ export default function Activity() {
                                 { title: 'Detail' },
                                 { title: 'Status' },
                                 { title: 'Time' },
+                                { title: 'Actions' },
                             ]}
                         >
                             {rowMarkup}

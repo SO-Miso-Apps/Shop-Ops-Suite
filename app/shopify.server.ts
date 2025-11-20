@@ -3,6 +3,7 @@ import {
   ApiVersion,
   AppDistribution,
   shopifyApp,
+  BillingInterval,
 } from "@shopify/shopify-app-remix/server";
 import { RedisSessionStorage } from "@shopify/shopify-app-session-storage-redis";
 import { connectDB } from "./db.server";
@@ -17,6 +18,13 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new RedisSessionStorage(process.env.REDIS_URL || "redis://localhost:6379"),
   distribution: AppDistribution.AppStore,
+  billing: {
+    "Pro": {
+      amount: 9.99,
+      currencyCode: "USD",
+      interval: BillingInterval.Every30Days,
+    },
+  },
   future: {
     unstable_newEmbeddedAuthStrategy: true,
     removeRest: true,

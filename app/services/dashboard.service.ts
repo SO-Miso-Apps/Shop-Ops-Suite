@@ -28,54 +28,116 @@ export class DashboardService {
 
         // 2. Fetch Active Rules from DB
         const activeRules = await TaggingRule.countDocuments({ shop, isEnabled: true });
+        const rulesList = await TaggingRule.find({ shop, isEnabled: true }).select('name ruleId').lean();
 
-        // 3. AI Logic (Heuristics)
-        const suggestions: AISuggestion[] = [];
-
-        // Check for International Orders
+        // 3. Fetch Context Data for Insights
         const ordersResponse = await admin.graphql(RecentOrdersQuery);
         const ordersData = await ordersResponse.json();
         const recentOrders = ordersData.data.orders.nodes;
+        console.log("recentOrders", recentOrders);
 
-        const internationalCount = recentOrders.filter(
-            (o: any) => o.shippingAddress && o.shippingAddress.countryCode !== shopCountry
-        ).length;
-
-        // Rule: If > 20% of recent orders are international AND International Rule is OFF
-        const internationalRule = await TaggingRule.findOne({ shop, ruleId: 'international_order', isEnabled: true });
-
-        if (internationalCount > 2 && !internationalRule) {
-            suggestions.push({
-                id: "intl_orders",
-                title: "Detected International Traffic",
-                content: `We found that ${internationalCount} of your last 20 orders are international. You should enable the 'International Order' tagger to better segment these customers.`,
-                action: "Enable Rule",
-                type: "info",
-            });
-        }
-
-        // Check for Products without Cost
         const productsResponse = await admin.graphql(RecentProductsQuery);
         const productsData = await productsResponse.json();
         const recentProducts = productsData.data.products.nodes;
 
+        const suggestions: AISuggestion[] = [];
+
+        // Rule-based insights (Heuristics)
+
+        // Check for International Orders
+        const internationalCount = recentOrders.filter(
+            (o: any) => o.shippingAddress && o.shippingAddress.countryCode !== shopCountry
+        ).length;
+
+        const internationalRule = rulesList.find((r: any) =>
+            r.name?.toLowerCase().includes('international') ||
+            r.ruleId === 'international_order'
+        );
+
+        if (internationalCount > 2 && !internationalRule) {
+            suggestions.push({
+                id: "intl_orders",
+                title: "International Orders Detected",
+                content: `${internationalCount} of your last ${recentOrders.length} orders are international. Create a rule to auto-tag them.`,
+                action: "Create Rule",
+                type: "info"
+            });
+        }
+
+        // Check for Products without Cost
         const productsNoCost = recentProducts.filter((p: any) => {
-            const variant = p.variants.nodes[0];
+            const variant = p.variants?.nodes?.[0];
             return !variant?.inventoryItem?.unitCost?.amount || parseFloat(variant.inventoryItem.unitCost.amount) === 0;
         }).length;
 
         if (productsNoCost > 5) {
             suggestions.push({
-                id: "missing_cogs",
-                title: "Missing Cost Data",
-                content: `We detected ${productsNoCost} recent products without a Cost per Item. Add this data to unlock profit tracking.`,
-                action: "Update COGS",
-                type: "warning",
+                id: "missing_costs",
+                title: "Missing Product Costs",
+                content: `${productsNoCost} products don't have cost data. Add costs to track profit margins accurately.`,
+                action: "Update Costs",
+                type: "warning"
             });
         }
 
+        // Check for High-Value Orders (potential VIP customers)
+        const highValueOrders = recentOrders.filter((o: any) => {
+            const amount = parseFloat(o.totalPriceSet?.shopMoney?.amount || 0);
+            return amount > 1000; // Threshold: $1000
+        }).length;
+
+        const vipRule = rulesList.find((r: any) =>
+            r.name?.toLowerCase().includes('vip') ||
+            r.name?.toLowerCase().includes('high value')
+        );
+
+        if (highValueOrders > 0 && !vipRule) {
+            suggestions.push({
+                id: "high_value",
+                title: "High-Value Customers Found",
+                content: `${highValueOrders} orders over $1000. Create a VIP tagging rule to segment premium customers.`,
+                action: "Create Rule",
+                type: "success"
+            });
+        }
+
+        // Check for Low Inventory Products
+        const lowInventory = recentProducts.filter((p: any) => {
+            const inventory = p.totalInventory || p.variants?.nodes?.[0]?.inventoryQuantity || 0;
+            return inventory > 0 && inventory < 10;
+        }).length;
+
+        if (lowInventory > 3) {
+            suggestions.push({
+                id: "inventory_low",
+                title: "Low Inventory Alert",
+                content: `${lowInventory} products have less than 10 units in stock. Consider creating a low-stock tag rule.`,
+                action: "Create Rule",
+                type: "warning"
+            });
+        }
+
+        // Check for messy tags (optional)
+        const allTags = new Set<string>();
+        recentProducts.forEach((p: any) => {
+            (p.tags || []).forEach((tag: string) => allTags.add(tag));
+        });
+
+        if (allTags.size > 50) {
+            suggestions.push({
+                id: "tag_cleanup",
+                title: "Too Many Tags",
+                content: `Your store has ${allTags.size} different tags. Clean up unused tags for better organization.`,
+                action: "Clean Tags",
+                type: "info"
+            });
+        }
+
+        // Limit to top 3 suggestions
+        const topSuggestions = suggestions.slice(0, 3);
+
         // 4. Calculate Savings (Mock logic for MVP)
-        const savingsHours = Math.round((activeRules * totalOrders * 0.1) / 60); // Mock calculation
+        const savingsHours = Math.round((activeRules * totalOrders * 0.1) / 60);
 
         return {
             stats: {
@@ -84,7 +146,7 @@ export class DashboardService {
                 activeRules,
                 savingsHours: savingsHours || 0,
             },
-            suggestions,
+            suggestions: topSuggestions,
         };
     }
 }

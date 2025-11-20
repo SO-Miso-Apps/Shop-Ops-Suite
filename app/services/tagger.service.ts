@@ -318,7 +318,7 @@ export class TaggerService {
         }
     }
 
-    private static checkConditions(resource: any, conditions: any[]): boolean {
+    public static checkConditions(resource: any, conditions: any[]): boolean {
         if (!conditions || conditions.length === 0) {
             return true;
         }
@@ -364,5 +364,64 @@ export class TaggerService {
         } catch (e) {
             return "";
         }
+    }
+
+    static async simulateRule(shop: string, rule: any, sampleSize: number = 10) {
+        const { admin } = await unauthenticated.admin(shop);
+        const resourceType = rule.resourceType || "products"; // Default to products if not specified
+
+        // Fetch recent items
+        const query = `
+        {
+            ${resourceType}(first: ${sampleSize}, reverse: true) {
+                nodes {
+                    id
+                    title
+                    tags
+                    vendor
+                    productType
+                    totalInventory
+                    priceRangeV2 {
+                        minVariantPrice {
+                            amount
+                        }
+                    }
+                    variants(first: 1) {
+                        nodes {
+                            price
+                            sku
+                            inventoryQuantity
+                        }
+                    }
+                    # Add other fields commonly used in rules
+                }
+            }
+        }`;
+
+        const response = await admin.graphql(query);
+        const data = await response.json();
+        const items = data.data[resourceType].nodes;
+
+        const matchedItems: any[] = [];
+
+        for (const item of items) {
+            // Normalize item for checkConditions
+            const normalizedItem = {
+                ...item,
+                price: item.variants?.nodes?.[0]?.price || item.priceRangeV2?.minVariantPrice?.amount,
+                sku: item.variants?.nodes?.[0]?.sku,
+                inventory: item.variants?.nodes?.[0]?.inventoryQuantity || item.totalInventory
+            };
+
+            if (TaggerService.checkConditions(normalizedItem, rule.conditions)) {
+                matchedItems.push({
+                    id: item.id,
+                    title: item.title,
+                    reason: "Matches conditions"
+                });
+            }
+        }
+
+        return matchedItems;
     }
 }

@@ -4,6 +4,7 @@ const activityLogSchema = new mongoose.Schema({
     shop: { type: String, required: true },
     resourceType: { type: String, required: true },
     resourceId: { type: String, required: true },
+    jobId: { type: String, index: true }, // Link to BullMQ Job / Backup
     action: { type: String, required: true },
     detail: { type: String, required: true },
     status: { type: String, enum: ['Success', 'Failed'], default: 'Success' },

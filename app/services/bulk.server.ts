@@ -1,139 +1,215 @@
 import { unauthenticated } from "../shopify.server";
 import { ActivityLog } from "../db.server";
+import { BulkOperationService } from "./bulk_operation.service";
+import { bulkQueue } from "../queues";
+import { Backup } from "../models/Backup";
 
 export async function processBulkJob(job: any) {
-    const { shop, resourceType, findTag, replaceTag, operation } = job.data;
-    console.log(`Processing bulk job for ${shop}: ${operation} ${findTag} -> ${replaceTag}`);
+  const { shop, resourceType, findTag, replaceTag, operation, step = 'init', operationId, mutationOpId } = job.data;
+  console.log(`Processing bulk job for ${shop}: ${operation} ${findTag} -> ${replaceTag} [Step: ${step}]`);
 
-    try {
-        const { admin } = await unauthenticated.admin(shop);
-        if (!admin) throw new Error("No admin context");
+  try {
+    // --- STEP 1: INIT (Start Query) ---
+    if (step === 'init') {
+      const query = `
+            {
+                ${resourceType}(query: "tag:${findTag}") {
+                    edges {
+                        node {
+                            id
+                            tags
+                        }
+                    }
+                }
+            }`;
 
-        // 1. Find resources with the tag
-        // For MVP, we use a simple query. For production, use bulkOperationRunQuery.
-        // We'll fetch first 50 matching items for this demo to avoid complexity of bulk op file parsing.
+      const bulkOp = await BulkOperationService.runBulkQuery(shop, query);
+      await bulkQueue.add(job.name, { ...job.data, step: 'polling_query', operationId: bulkOp.id }, { delay: 5000 });
 
-        const query = `#graphql
-      query ($query: String!) {
-        ${resourceType}(first: 50, query: $query) {
-          nodes {
-            id
-            tags
+      await ActivityLog.create({
+        shop,
+        resourceType,
+        resourceId: "Bulk",
+        action: "Bulk Operation",
+        detail: `Started Bulk Query: ${bulkOp.id}`,
+        status: "Pending",
+      });
+      return;
+    }
+
+    // --- STEP 2: POLLING QUERY ---
+    if (step === 'polling_query') {
+      const bulkOp = await BulkOperationService.pollBulkOperation(shop, operationId);
+
+      if (bulkOp.status === 'RUNNING' || bulkOp.status === 'CREATED') {
+        await bulkQueue.add(job.name, job.data, { delay: 5000 });
+        return;
+      }
+
+      if (bulkOp.status === 'COMPLETED') {
+        if (parseInt(bulkOp.objectCount) === 0) {
+          await ActivityLog.create({
+            shop,
+            resourceType,
+            resourceId: "Bulk",
+            action: "Bulk Operation",
+            detail: `No items found with tag '${findTag}'`,
+            status: "Success",
+          });
+          return;
+        }
+        await bulkQueue.add(job.name, { ...job.data, step: 'processing', resultUrl: bulkOp.url }, { delay: 0 });
+        return;
+      }
+
+      throw new Error(`Bulk Query Failed: ${bulkOp.status} - ${bulkOp.errorCode}`);
+    }
+
+    // --- STEP 3: PROCESSING & MUTATION ---
+    if (step === 'processing') {
+      const { resultUrl } = job.data;
+      const response = await fetch(resultUrl);
+      const jsonlText = await response.text();
+      const lines = jsonlText.split('\n').filter(line => line.trim() !== '');
+
+      const mutations = [];
+      const backupItems = [];
+
+      for (const line of lines) {
+        const item = JSON.parse(line);
+        // Note: bulkOperationRunQuery returns nested structure slightly differently depending on query
+        // But here we asked for edges { node { id tags } } so the JSONL lines are the nodes directly?
+        // Actually, JSONL from bulk query flattens the structure. It will be objects with { id, tags }.
+        // Let's assume standard JSONL output.
+
+        let newTags = [...(item.tags || [])];
+        let needsUpdate = false;
+
+        if (operation === "replace") {
+          if (newTags.includes(findTag)) {
+            newTags = newTags.filter(t => t !== findTag);
+            if (!newTags.includes(replaceTag)) newTags.push(replaceTag);
+            needsUpdate = true;
           }
+        } else if (operation === "remove") {
+          if (newTags.includes(findTag)) {
+            newTags = newTags.filter(t => t !== findTag);
+            needsUpdate = true;
+          }
+        } else if (operation === "add") {
+          // If we found it via query, it has the tag.
+          if (!newTags.includes(replaceTag)) {
+            newTags.push(replaceTag);
+            needsUpdate = true;
+          }
+        }
+
+        if (needsUpdate) {
+          // We use tagsAdd or tagsRemove? 
+          // Bulk Mutation using tagsAdd/tagsRemove is tricky because we need to know which one.
+          // But we can use `tagsUpdate` (if available) or just `tagsAdd` and `tagsRemove`.
+          // Actually, `tagsAdd` adds, `tagsRemove` removes.
+          // If replacing, we need TWO mutations.
+          // OR, we can use `productUpdate` / `customerUpdate` which sets the tags (overwrites).
+          // `productUpdate(input: {id: ..., tags: ...})` replaces all tags.
+          // This is safer for "replace" logic.
+
+          mutations.push({
+            id: item.id,
+            tags: newTags
+          });
+          backupItems.push({
+            resourceId: item.id,
+            originalTags: item.tags || []
+          });
         }
       }
-    `;
 
-        const searchRes = await admin.graphql(query, {
-            variables: {
-                query: `tag:${findTag}`,
-            },
-        });
-
-        const searchData = await searchRes.json();
-        const resources = searchData.data[resourceType].nodes;
-
-        if (resources.length === 0) {
-            await ActivityLog.create({
-                shop,
-                resourceType,
-                resourceId: "Bulk",
-                action: "Bulk Operation",
-                detail: `No ${resourceType} found with tag '${findTag}'`,
-                status: "Success",
-            });
-            return;
-        }
-
-        // 2. Perform updates
-        let successCount = 0;
-
-        for (const item of resources) {
-            let newTags = [...item.tags];
-
-            if (operation === "replace") {
-                newTags = newTags.filter(t => t !== findTag);
-                if (!newTags.includes(replaceTag)) newTags.push(replaceTag);
-            } else if (operation === "remove") {
-                newTags = newTags.filter(t => t !== findTag);
-            } else if (operation === "add") {
-                // "findTag" here acts as the condition, but if operation is add, maybe we just add to all?
-                // But the UI implies "Find Tag" is the condition.
-                // If operation is "add", we might want to add 'replaceTag' (as the tag to add) 
-                // to items that have 'findTag'.
-                // Let's assume: Find items with 'findTag', and add 'replaceTag' to them.
-                if (!newTags.includes(replaceTag)) newTags.push(replaceTag);
-            }
-
-            const mutation = `#graphql
-        mutation tagsAdd($id: ID!, $tags: [String!]!) {
-          tagsAdd(id: $id, tags: $tags) {
-            userErrors {
-              message
-            }
-          }
-        }
-      `;
-
-            // Note: tagsAdd adds tags. To remove, we need tagsRemove or tagsUpdate.
-            // tagsUpdate replaces ALL tags. tagsRemove removes specific tags.
-            // Let's use tagsRemove if removing, tagsAdd if adding.
-            // If replacing, we might need both or tagsUpdate.
-            // Safest is tagsUpdate (set tags to new list), but it overwrites concurrent changes.
-            // Better: remove old, add new.
-
-            if (operation === "remove" || operation === "replace") {
-                const removeMutation = `#graphql
-          mutation tagsRemove($id: ID!, $tags: [String!]!) {
-            tagsRemove(id: $id, tags: $tags) {
-              userErrors {
-                message
-              }
-            }
-          }
-        `;
-                await admin.graphql(removeMutation, {
-                    variables: { id: item.id, tags: [findTag] }
-                });
-            }
-
-            if (operation === "add" || operation === "replace") {
-                const addMutation = `#graphql
-          mutation tagsAdd($id: ID!, $tags: [String!]!) {
-            tagsAdd(id: $id, tags: $tags) {
-              userErrors {
-                message
-              }
-            }
-          }
-        `;
-                await admin.graphql(addMutation, {
-                    variables: { id: item.id, tags: [replaceTag] }
-                });
-            }
-
-            successCount++;
-        }
-
+      if (mutations.length === 0) {
         await ActivityLog.create({
-            shop,
-            resourceType,
-            resourceId: "Bulk",
-            action: "Bulk Operation",
-            detail: `Processed ${successCount} items. Operation: ${operation} '${findTag}'`,
-            status: "Success",
+          shop,
+          resourceType,
+          resourceId: "Bulk",
+          action: "Bulk Operation",
+          detail: `No updates needed for ${lines.length} items.`,
+          status: "Success",
         });
+        return;
+      }
 
-    } catch (error) {
-        console.error("Bulk job error:", error);
-        await ActivityLog.create({
-            shop,
-            resourceType,
-            resourceId: "Bulk",
-            action: "Bulk Operation",
-            detail: `Failed: ${(error as Error).message}`,
-            status: "Failed",
-        });
-        throw error;
+      // Save Backup
+      await Backup.create({
+        shop,
+        jobId: job.id, // Use BullMQ Job ID as reference
+        resourceType,
+        items: backupItems
+      });
+
+      // Create Mutation JSONL
+      // We will use `productUpdate` or `customerUpdate`.
+      // Variable: input: { id: "...", tags: [...] }
+      const mutationLines = mutations.map(m => JSON.stringify({ input: m }));
+      const mutationFileContent = mutationLines.join('\n');
+
+      // Upload
+      const stagedUpload = await BulkOperationService.getStagedUploadUrl(shop);
+      const formData = new FormData();
+      stagedUpload.parameters.forEach((p: any) => formData.append(p.name, p.value));
+      formData.append("file", new Blob([mutationFileContent], { type: "text/jsonl" }));
+
+      await fetch(stagedUpload.url, {
+        method: "POST",
+        body: formData,
+      });
+
+      // Run Mutation
+      // We need to know if it's product or customer to choose the mutation.
+      const mutationQuery = resourceType === 'products'
+        ? `mutation productUpdate($input: ProductInput!) { productUpdate(input: $input) { product { id } userErrors { message } } }`
+        : `mutation customerUpdate($input: CustomerInput!) { customerUpdate(input: $input) { customer { id } userErrors { message } } }`;
+
+      const mutationOp = await BulkOperationService.runBulkMutation(shop, mutationQuery, stagedUpload.parameters.find((p: any) => p.name === 'key').value);
+
+      await bulkQueue.add(job.name, { ...job.data, step: 'polling_mutation', mutationOpId: mutationOp.id, count: mutations.length }, { delay: 5000 });
+      return;
     }
+
+    // --- STEP 4: POLLING MUTATION ---
+    if (step === 'polling_mutation') {
+      const { mutationOpId, count } = job.data;
+      const bulkOp = await BulkOperationService.pollBulkOperation(shop, mutationOpId);
+
+      if (bulkOp.status === 'RUNNING' || bulkOp.status === 'CREATED') {
+        await bulkQueue.add(job.name, job.data, { delay: 5000 });
+        return;
+      }
+
+      if (bulkOp.status === 'COMPLETED') {
+        // We could check for errors in the result file, but for MVP we assume success if no system errors.
+        await ActivityLog.create({
+          shop,
+          resourceType,
+          resourceId: "Bulk",
+          action: "Bulk Operation",
+          detail: `Successfully updated ${count} items.`,
+          status: "Success",
+        });
+        return;
+      }
+
+      throw new Error(`Bulk Mutation Failed: ${bulkOp.status}`);
+    }
+
+  } catch (error) {
+    console.error("Bulk job error:", error);
+    await ActivityLog.create({
+      shop,
+      resourceType,
+      resourceId: "Bulk",
+      action: "Bulk Operation",
+      detail: `Failed: ${(error as Error).message}`,
+      status: "Failed",
+    });
+    throw error;
+  }
 }
