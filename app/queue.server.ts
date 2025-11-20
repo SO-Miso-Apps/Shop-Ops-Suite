@@ -12,6 +12,7 @@ const connection = new IORedis(REDIS_URL, {
 export const webhookQueue = new Queue("webhook-processing", { connection });
 export const bulkQueue = new Queue("bulk-operations", { connection });
 export const cronQueue = new Queue("cron-tasks", { connection });
+export const cleanerQueue = new Queue("cleaner-jobs", { connection });
 
 // --- Workers ---
 
@@ -19,21 +20,25 @@ export const cronQueue = new Queue("cron-tasks", { connection });
 let webhookWorker: Worker;
 let bulkWorker: Worker;
 let cronWorker: Worker;
+let cleanerWorker: Worker;
 
 declare global {
     var __webhookWorker: Worker | undefined;
     var __bulkWorker: Worker | undefined;
     var __cronWorker: Worker | undefined;
+    var __cleanerWorker: Worker | undefined;
 }
 
 if (process.env.NODE_ENV !== "production") {
     if (global.__webhookWorker) global.__webhookWorker.close();
     if (global.__bulkWorker) global.__bulkWorker.close();
     if (global.__cronWorker) global.__cronWorker.close();
+    if (global.__cleanerWorker) global.__cleanerWorker.close();
 }
 
 import { processWebhookJob as taggerProcessor } from "./services/tagger.server";
 import { processBulkJob as bulkProcessor } from "./services/bulk.server";
+import { processCleanerJob as cleanerProcessor } from "./services/cleaner.server";
 
 const processWebhookJob = async (job: Job) => {
     console.log(`Processing webhook job ${job.id}:`, job.name);
@@ -54,9 +59,16 @@ const processCronJob = async (job: Job) => {
     return { status: "processed" };
 };
 
+const processCleanerJob = async (job: Job) => {
+    console.log(`Processing cleaner job ${job.id}:`, job.name);
+    await cleanerProcessor(job);
+    return { status: "processed" };
+};
+
 webhookWorker = new Worker("webhook-processing", processWebhookJob, { connection });
 bulkWorker = new Worker("bulk-operations", processBulkJob, { connection });
 cronWorker = new Worker("cron-tasks", processCronJob, { connection });
+cleanerWorker = new Worker("cleaner-jobs", processCleanerJob, { connection });
 
 // Schedule nightly job if not exists
 // Note: In dev, this might run multiple times on restart, but add is idempotent with same job ID
@@ -71,8 +83,9 @@ if (process.env.NODE_ENV !== "production") {
     global.__webhookWorker = webhookWorker;
     global.__bulkWorker = bulkWorker;
     global.__cronWorker = cronWorker;
+    global.__cleanerWorker = cleanerWorker;
 }
 
 console.log("🚀 Background workers started");
 
-export { webhookWorker, bulkWorker, cronWorker };
+export { webhookWorker, bulkWorker, cronWorker, cleanerWorker };

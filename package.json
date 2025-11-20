@@ -12,6 +12,7 @@
     "env": "shopify app env",
     "start": "remix-serve ./build/server/index.js",
     "lint": "eslint --cache --cache-location ./node_modules/.cache/eslint .",
+    "graphql-codegen": "graphql-codegen",
     "types-check": "tsc --noEmit --skipLibCheck",
     "test": "vitest",
     "test:ui": "vitest --ui",

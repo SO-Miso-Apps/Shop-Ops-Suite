@@ -16,9 +16,11 @@ import {
   Text,
   Scrollable,
   EmptyState,
+  Modal,
 } from "@shopify/polaris";
 import { useState, useEffect } from "react";
 import { authenticate } from "../shopify.server";
+import { cleanerQueue } from "../queue.server";
 
 export const loader = async ({ request }: { request: Request }) => {
   await authenticate.admin(request);
@@ -26,7 +28,7 @@ export const loader = async ({ request }: { request: Request }) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const actionType = formData.get("actionType");
 
@@ -60,13 +62,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         `;
 
         try {
-          const response = await admin.graphql(query, { variables: { cursor } });
-          const data = await response.json();
+          const response: any = await admin.graphql(query, { variables: { cursor } });
+          const data: any = await response.json();
 
           const nodes = data.data[resourceType].nodes;
           nodes.forEach((node: any) => allTags.push(...node.tags));
 
-          const pageInfo = data.data[resourceType].pageInfo;
+          const pageInfo: any = data.data[resourceType].pageInfo;
           hasNextPage = pageInfo.hasNextPage;
           cursor = pageInfo.endCursor;
           count += nodes.length;
@@ -123,18 +125,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   } else if (actionType === "cleanTags") {
     const tagsToRemove = JSON.parse(formData.get("tags") as string);
 
-    // CLEAN STRATEGY:
-    // Với việc xóa tag, chúng ta phải tìm product có tag đó rồi update.
-    // Việc này RẤT nặng nếu chạy trực tiếp.
-    // Ở đây ta sẽ gửi job vào Queue để xử lý ngầm (Giả lập bằng log cho MVP)
-    // Hoặc thực hiện xóa mẫu cho 10 items đầu tiên tìm thấy.
-
-    console.log("Cleaning tags:", tagsToRemove);
+    // Dispatch job to BullMQ for background processing
+    const job = await cleanerQueue.add("clean-tags", {
+      shop: session.shop,
+      tagsToRemove,
+    });
 
     return json({
-      status: "cleaned",
+      status: "queued",
       count: tagsToRemove.length,
-      message: "Cleanup job started in background."
+      jobId: job.id,
+      message: `Tag cleanup job queued successfully. Check Activity Logs for completion status.`
     });
   }
 
@@ -151,6 +152,8 @@ export default function DataCleaner() {
       itemsScanned: number;
     };
     count?: number;
+    jobId?: string;
+    message?: string;
   };
 
   const submit = useSubmit();
@@ -159,6 +162,7 @@ export default function DataCleaner() {
 
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [progress, setProgress] = useState(0);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Fake progress bar effect when loading
   useEffect(() => {
@@ -174,22 +178,25 @@ export default function DataCleaner() {
   }, [isLoading]);
 
   const results = actionData?.results;
-  const isCleaned = actionData?.status === "cleaned";
+  const isCleaned = actionData?.status === "queued";
 
   const handleScan = () => {
     submit({ actionType: "scanTags" }, { method: "post" });
   };
 
   const handleClean = () => {
-    if (confirm(`Are you sure you want to remove ${selectedTags.length} tags from ALL products and customers? This cannot be undone.`)) {
-      submit(
-        {
-          actionType: "cleanTags",
-          tags: JSON.stringify(selectedTags)
-        },
-        { method: "post" }
-      );
-    }
+    setIsModalOpen(true);
+  };
+
+  const confirmClean = () => {
+    submit(
+      {
+        actionType: "cleanTags",
+        tags: JSON.stringify(selectedTags)
+      },
+      { method: "post" }
+    );
+    setIsModalOpen(false);
   };
 
   const toggleTag = (tag: string) => {
@@ -306,14 +313,60 @@ export default function DataCleaner() {
               )}
 
               {isCleaned && (
-                <Banner tone="success" onDismiss={() => window.location.reload()}>
-                  Cleanup task queued! {actionData.count} tags will be removed in the background.
+                <Banner tone="info" onDismiss={() => window.location.reload()}>
+                  <BlockStack gap="200">
+                    <Text as="p">
+                      {actionData.message || `Cleanup job queued! ${actionData.count} tag(s) will be removed.`}
+                    </Text>
+                    {actionData.jobId && (
+                      <Text as="p" tone="subdued">
+                        Job ID: {actionData.jobId}
+                      </Text>
+                    )}
+                  </BlockStack>
                 </Banner>
               )}
             </BlockStack>
           </Card>
         </Layout.Section>
       </Layout>
+      <Modal
+        open={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title="Confirm Tag Cleanup"
+        primaryAction={{
+          content: `Clean ${selectedTags.length} Tags`,
+          onAction: confirmClean,
+          destructive: true,
+          loading: isLoading,
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            onAction: () => setIsModalOpen(false),
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Text as="p">
+              Are you sure you want to remove <strong>{selectedTags.length}</strong> tags from <strong>ALL</strong> products and customers?
+            </Text>
+            <Banner tone="warning">
+              This action cannot be undone. The cleanup process will run in the background.
+            </Banner>
+            <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+              <Scrollable style={{ maxHeight: '150px' }} shadow>
+                <List>
+                  {selectedTags.map(tag => (
+                    <List.Item key={tag}>{tag}</List.Item>
+                  ))}
+                </List>
+              </Scrollable>
+            </Box>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </Page>
   );
 }
