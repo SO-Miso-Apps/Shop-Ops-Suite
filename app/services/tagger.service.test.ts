@@ -188,4 +188,52 @@ describe('TaggerService', () => {
       expect(TaggerService.checkConditions(resource, conditions)).toBe(true);
     });
   });
+
+  describe("checkConditions Advanced Fields", () => {
+    const order = {
+      shipping_lines: [{ title: "Standard Shipping" }, { title: "Express" }],
+      line_items: [
+        { sku: "SKU1", title: "Blue Shirt", quantity: 1 },
+        { sku: "SKU2", title: "Red Pants", quantity: 2 }
+      ],
+      customer: {
+        orders_count: 5,
+        default_address: {
+          country_code: "US"
+        }
+      }
+    };
+
+    it("should handle nested array index (shipping_lines[0].title)", () => {
+      const conditions = [{ field: "shipping_lines[0].title", operator: "equals", value: "Standard Shipping" }];
+      const result = TaggerService.checkConditions(order, conditions);
+      expect(result).toBe(true);
+    });
+
+    it("should handle array mapping with equals (line_items.sku)", () => {
+      // Should match if ANY item has SKU1
+      const conditions = [{ field: "line_items.sku", operator: "equals", value: "SKU1" }];
+      const result = TaggerService.checkConditions(order, conditions);
+      expect(result).toBe(true);
+    });
+
+    it("should handle array mapping with contains (line_items.title)", () => {
+      // Should match if ANY item title contains "Pants"
+      const conditions = [{ field: "line_items.title", operator: "contains", value: "Pants" }];
+      const result = TaggerService.checkConditions(order, conditions);
+      expect(result).toBe(true);
+    });
+
+    it("should handle array mapping failure", () => {
+      const conditions = [{ field: "line_items.sku", operator: "equals", value: "SKU999" }];
+      const result = TaggerService.checkConditions(order, conditions);
+      expect(result).toBe(false);
+    });
+
+    it("should handle deep nested fields (customer.default_address.country_code)", () => {
+      const conditions = [{ field: "customer.default_address.country_code", operator: "equals", value: "US" }];
+      const result = TaggerService.checkConditions(order, conditions);
+      expect(result).toBe(true);
+    });
+  });
 });

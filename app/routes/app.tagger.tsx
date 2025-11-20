@@ -1,32 +1,32 @@
-import { useState, useEffect, useCallback } from "react";
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useActionData, useFetcher } from "@remix-run/react";
+import { useActionData, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import {
-    Page,
-    Layout,
-    Card,
-    ResourceList,
-    ResourceItem,
-    Text,
     Badge,
-    Button,
-    Modal,
-    TextField,
-    BlockStack,
-    InlineStack,
-    Select,
     Banner,
+    BlockStack,
     Box,
-    Tabs,
-    Icon,
+    Button,
+    Card,
     EmptyState,
     FormLayout,
+    InlineStack,
+    Layout,
+    Modal,
+    Page,
     RadioButton,
+    ResourceItem,
+    ResourceList,
+    Select,
+    Tabs,
+    Text,
+    TextField
 } from "@shopify/polaris";
-import { PlusIcon, DeleteIcon, EditIcon } from "@shopify/polaris-icons";
-import { authenticate } from "../shopify.server";
+import { DeleteIcon, MagicIcon, PlusIcon } from "@shopify/polaris-icons";
+import { useCallback, useEffect, useState } from "react";
+import { AIService } from "../services/ai.service";
 import { TaggerService } from "../services/tagger.service";
-import { useAppBridge } from "@shopify/app-bridge-react";
+import { authenticate } from "../shopify.server";
 
 // --- Backend Logic ---
 
@@ -96,6 +96,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         delete ruleData.updatedAt;
         ruleData.isEnabled = false; // Import as disabled
         await TaggerService.saveRule(session.shop, ruleData);
+    } else if (actionType === "generateRule") {
+        const prompt = formData.get("prompt") as string;
+        const resourceType = formData.get("resourceType") as string;
+        try {
+            const generatedRule = await AIService.generateRuleFromPrompt(prompt, resourceType);
+            return json({ status: "success", generatedRule });
+        } catch (error) {
+            return json({ status: "error", message: "Failed to generate rule" }, { status: 500 });
+        }
     }
 
     return json({ status: "success" });
@@ -113,6 +122,8 @@ export default function SmartTagger() {
 
     const [selectedTab, setSelectedTab] = useState(0);
     const [modalOpen, setModalOpen] = useState(false);
+    const [aiPrompt, setAiPrompt] = useState("");
+    const [isGenerating, setIsGenerating] = useState(false);
     const [editingRule, setEditingRule] = useState<any>(null);
 
     // Form State
@@ -127,10 +138,24 @@ export default function SmartTagger() {
 
     useEffect(() => {
         if (actionData?.status === "success" || (fetcher.data as any)?.status === "success") {
-            shopify.toast.show("Success");
-            setModalOpen(false);
+            if ((actionData as any)?.generatedRule || (fetcher.data as any)?.generatedRule) {
+                const rule = (actionData as any)?.generatedRule || (fetcher.data as any)?.generatedRule;
+                setFormData({
+                    ...formData,
+                    name: rule.name || formData.name,
+                    conditionLogic: rule.conditionLogic || 'AND',
+                    conditions: rule.conditions || [],
+                    tags: rule.tags || []
+                });
+                setIsGenerating(false);
+                shopify.toast.show("Rule generated!");
+            } else {
+                shopify.toast.show("Success");
+                setModalOpen(false);
+            }
         } else if ((actionData as any)?.status === "error" || (fetcher.data as any)?.status === "error") {
             shopify.toast.show((actionData as any)?.message || (fetcher.data as any)?.message || "An error occurred", { isError: true });
+            setIsGenerating(false);
         }
     }, [actionData, fetcher.data, shopify]);
 
@@ -193,6 +218,11 @@ export default function SmartTagger() {
         fetcher.submit({ actionType: "saveRule", ruleData: JSON.stringify(formData) }, { method: "post" });
     };
 
+    const handleGenerateAI = () => {
+        setIsGenerating(true);
+        fetcher.submit({ actionType: "generateRule", prompt: aiPrompt, resourceType: formData.resourceType }, { method: "post" });
+    };
+
     // Condition Builder Helpers
     const addCondition = () => {
         setFormData({
@@ -219,17 +249,35 @@ export default function SmartTagger() {
 
     const fieldOptions = formData.resourceType === "orders" ? [
         { label: "Total Price", value: "total_price" },
-        { label: "Customer Order Count", value: "customer.orders_count" },
-        { label: "Shipping Country", value: "shipping_address.country_code" },
-        { label: "Tags", value: "tags" },
-        { label: "Email", value: "email" },
-        { label: "Currency", value: "currency" },
+        { label: "Subtotal Price", value: "subtotal_price" },
+        { label: "Gateway / Payment Method", value: "gateway" },
         { label: "Financial Status", value: "financial_status" },
+        { label: "Currency", value: "currency" },
+        { label: "Total Weight", value: "total_weight" },
+        { label: "Shipping Method", value: "shipping_lines[0].title" },
+        { label: "Shipping City", value: "shipping_address.city" },
+        { label: "Shipping Country", value: "shipping_address.country_code" },
+        { label: "Shipping Province/State", value: "shipping_address.province_code" },
+        { label: "Shipping Zip", value: "shipping_address.zip" },
+        { label: "Source Name", value: "source_name" },
+        { label: "Tags", value: "tags" },
+        { label: "Discount Code", value: "discount_codes[0].code" },
+        { label: "Landing Site", value: "landing_site" },
+        { label: "Referring Site", value: "referring_site" },
+        { label: "Line Item SKU", value: "line_items.sku" },
+        { label: "Line Item Vendor", value: "line_items.vendor" },
+        { label: "Line Item Name", value: "line_items.name" },
+        { label: "Line Item Quantity", value: "line_items.quantity" },
+        { label: "Customer Order Count", value: "customer.orders_count" },
+        { label: "Email", value: "email" },
     ] : [
         { label: "Total Spent", value: "total_spent" },
         { label: "Orders Count", value: "orders_count" },
-        { label: "Country", value: "default_address.country_code" },
+        { label: "Account State", value: "state" },
+        { label: "Verified Email", value: "verified_email" },
+        { label: "Accepts Marketing", value: "accepts_marketing" },
         { label: "Tags", value: "tags" },
+        { label: "Country", value: "default_address.country_code" },
         { label: "Email", value: "email" },
         { label: "State/Province", value: "default_address.province_code" },
     ];
@@ -286,31 +334,49 @@ export default function SmartTagger() {
                                             id={item._id || item.id}
                                             accessibilityLabel={`View details for ${item.name}`}
                                             onClick={() => selectedTab === 0 && handleEdit(item)}
+                                            shortcutActions={selectedTab === 0 ? [
+                                                {
+                                                    content: item.isEnabled ? 'Turn Off' : 'Turn On',
+                                                    onAction: () => {
+                                                        // We need a toggle action. For now, let's just save with inverted status
+                                                        const newItem = { ...item, isEnabled: !item.isEnabled };
+                                                        fetcher.submit({ actionType: "saveRule", ruleData: JSON.stringify(newItem) }, { method: "post" });
+                                                    },
+                                                },
+                                                {
+                                                    content: 'Delete',
+                                                    onAction: () => {
+                                                        setDeleteId(item._id);
+                                                    },
+                                                }
+                                            ] : [
+                                                {
+                                                    content: 'Import',
+                                                    onAction: () => handleImport(item)
+                                                }
+                                            ]}
                                         >
                                             <InlineStack align="space-between" blockAlign="center">
-                                                <BlockStack gap="100">
-                                                    <Text variant="headingMd" as="h3">{item.name}</Text>
-                                                    <InlineStack gap="200">
-                                                        <Badge tone={item.resourceType === 'orders' ? 'info' : 'success'}>{item.resourceType}</Badge>
+                                                <BlockStack gap="200">
+                                                    <InlineStack gap="200" blockAlign="center">
+                                                        <Text variant="headingMd" as="h3">{item.name}</Text>
                                                         {selectedTab === 0 && (
-                                                            <Badge tone={item.isEnabled ? "success" : undefined}>
+                                                            <Badge tone={item.isEnabled ? "success" : "critical"}>
                                                                 {item.isEnabled ? "Active" : "Inactive"}
                                                             </Badge>
                                                         )}
+                                                        <Badge tone={item.resourceType === 'orders' ? 'info' : 'success'}>{item.resourceType}</Badge>
                                                     </InlineStack>
-                                                    <Text variant="bodySm" as="p" tone="subdued">
-                                                        Tags: {item.tags.join(", ")}
+                                                    <Text variant="bodyMd" as="p" tone="subdued">
+                                                        Tags: <b>{item.tags.join(", ")}</b>
+                                                    </Text>
+                                                    <Text variant="bodySm" as="p">
+                                                        {item.conditions.length === 0
+                                                            ? "Applied to ALL items"
+                                                            : `When: ${item.conditions.map((c: any) => `${c.field} ${c.operator} ${c.value}`).join(` ${item.conditionLogic || 'AND'} `)}`
+                                                        }
                                                     </Text>
                                                 </BlockStack>
-                                                <InlineStack gap="200">
-                                                    {selectedTab === 0 ? (
-                                                        <div onClick={(e) => e.stopPropagation()}>
-                                                            <Button icon={DeleteIcon} tone="critical" variant="plain" onClick={() => setDeleteId(item._id)} />
-                                                        </div>
-                                                    ) : (
-                                                        <Button onClick={() => handleImport(item)}>Import</Button>
-                                                    )}
-                                                </InlineStack>
                                             </InlineStack>
                                         </ResourceItem>
                                     );
@@ -334,105 +400,114 @@ export default function SmartTagger() {
                 size="large"
             >
                 <Modal.Section>
-                    <FormLayout>
+                    <BlockStack gap="400">
                         <TextField
-                            label="Rule Name"
-                            value={formData.name}
-                            onChange={(val) => setFormData({ ...formData, name: val })}
+                            label="Prompt"
+                            value={aiPrompt}
+                            onChange={(val) => setAiPrompt(val)}
                             autoComplete="off"
+                            placeholder="e.g. Tag orders over $500 from US as 'High Value'"
+                            helpText="Enter a prompt to generate a rule"
+                            multiline={1}
+                            connectedRight={
+                                <Button icon={MagicIcon} onClick={handleGenerateAI} disabled={isGenerating} loading={isGenerating} />
+                            }
                         />
-                        <Select
-                            label="Resource Type"
-                            options={resourceOptions}
-                            value={formData.resourceType}
-                            onChange={(val) => setFormData({ ...formData, resourceType: val })}
-                        />
+                        <Box padding="400" borderRadius="200" borderColor="border" borderWidth="025">
+                            <FormLayout>
+                                <FormLayout.Group>
+                                    <TextField
+                                        label="Rule Name"
+                                        value={formData.name}
+                                        onChange={(val) => setFormData({ ...formData, name: val })}
+                                        autoComplete="off"
+                                    />
+                                    <Select
+                                        label="Resource Type"
+                                        options={resourceOptions}
+                                        value={formData.resourceType}
+                                        onChange={(val) => setFormData({ ...formData, resourceType: val })}
+                                    />
 
-                        <BlockStack gap="200">
-                            <Text as="p">Condition Logic</Text>
-                            <InlineStack gap="400">
-                                <RadioButton
-                                    label="All rules passes"
-                                    helpText="The trigger will only run if every single condition is met"
-                                    checked={formData.conditionLogic === 'AND'}
-                                    id="logic-and"
-                                    name="conditionLogic"
-                                    onChange={() => setFormData({ ...formData, conditionLogic: 'AND' })}
+                                </FormLayout.Group>
+
+                                <FormLayout.Group title="Condition Logic">
+                                    <RadioButton
+                                        label="All rules passes"
+                                        helpText="The trigger will only run if every single condition is met"
+                                        checked={formData.conditionLogic === 'AND'}
+                                        id="logic-and"
+                                        name="conditionLogic"
+                                        onChange={() => setFormData({ ...formData, conditionLogic: 'AND' })}
+                                    />
+                                    <RadioButton
+                                        label="Any rule passes"
+                                        helpText="The trigger will run if any one of the conditions is true"
+                                        checked={formData.conditionLogic === 'OR'}
+                                        id="logic-or"
+                                        name="conditionLogic"
+                                        onChange={() => setFormData({ ...formData, conditionLogic: 'OR' })}
+                                    />
+                                </FormLayout.Group>
+
+                                <Text as="h3" variant="headingSm">Conditions</Text>
+                                {formData.conditions.map((condition: any, index: number) => (
+                                    <div key={index}>
+                                        {index > 0 && (
+                                            <div style={{ display: 'flex', alignItems: 'center', margin: '12px 0' }}>
+                                                <div style={{ flex: 1, borderBottom: '1px solid var(--p-color-border)' }}></div>
+                                                <div style={{ margin: '0 12px' }}>
+                                                    <Badge tone={formData.conditionLogic === 'OR' ? undefined : 'info'}>
+                                                        {formData.conditionLogic === 'OR' ? 'OR' : 'AND'}
+                                                    </Badge>
+                                                </div>
+                                                <div style={{ flex: 1, borderBottom: '1px solid var(--p-color-border)' }}></div>
+                                            </div>
+                                        )}
+                                        <InlineStack gap="200" align="start">
+                                            <div style={{ flex: 1 }}>
+                                                <Select
+                                                    label="Field"
+                                                    labelHidden
+                                                    options={fieldOptions}
+                                                    value={condition.field}
+                                                    onChange={(val) => updateCondition(index, "field", val)}
+                                                />
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                                <Select
+                                                    label="Operator"
+                                                    labelHidden
+                                                    options={operatorOptions}
+                                                    value={condition.operator}
+                                                    onChange={(val) => updateCondition(index, "operator", val)}
+                                                />
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                                <TextField
+                                                    label="Value"
+                                                    labelHidden
+                                                    value={condition.value}
+                                                    onChange={(val) => updateCondition(index, "value", val)}
+                                                    autoComplete="off"
+                                                />
+                                            </div>
+                                            <Button icon={DeleteIcon} onClick={() => removeCondition(index)} tone="critical" variant="plain" />
+                                        </InlineStack>
+                                    </div>
+                                ))}
+                                <Button onClick={addCondition} variant="plain" icon={PlusIcon}>Add Condition</Button>
+
+                                <TextField
+                                    label="Tags to Apply (comma separated)"
+                                    value={formData.tags.join(", ")}
+                                    onChange={(val) => setFormData({ ...formData, tags: val.split(",").map(t => t.trim()) })}
+                                    autoComplete="off"
+                                    helpText="Tags will be added when conditions match, and REMOVED when they don't."
                                 />
-                                <RadioButton
-                                    label="Any rule passes"
-                                    helpText="The trigger will run if any one of the conditions is true"
-                                    checked={formData.conditionLogic === 'OR'}
-                                    id="logic-or"
-                                    name="conditionLogic"
-                                    onChange={() => setFormData({ ...formData, conditionLogic: 'OR' })}
-                                />
-                            </InlineStack>
-                        </BlockStack>
-
-                        <Text as="h3" variant="headingSm">Conditions</Text>
-                        {formData.conditions.map((condition: any, index: number) => (
-                            <div key={index}>
-                                {index > 0 && (
-                                    <div style={{ display: 'flex', alignItems: 'center', margin: '12px 0' }}>
-                                        <div style={{ flex: 1, borderBottom: '1px solid var(--p-color-border)' }}></div>
-                                        <div style={{ margin: '0 12px' }}>
-                                            <Badge tone={formData.conditionLogic === 'OR' ? undefined : 'info'}>
-                                                {formData.conditionLogic === 'OR' ? 'OR' : 'AND'}
-                                            </Badge>
-                                        </div>
-                                        <div style={{ flex: 1, borderBottom: '1px solid var(--p-color-border)' }}></div>
-                                    </div>
-                                )}
-                                <InlineStack gap="200" align="start">
-                                    <div style={{ flex: 1 }}>
-                                        <Select
-                                            label="Field"
-                                            labelHidden
-                                            options={fieldOptions}
-                                            value={condition.field}
-                                            onChange={(val) => updateCondition(index, "field", val)}
-                                        />
-                                    </div>
-                                    <div style={{ flex: 1 }}>
-                                        <Select
-                                            label="Operator"
-                                            labelHidden
-                                            options={operatorOptions}
-                                            value={condition.operator}
-                                            onChange={(val) => updateCondition(index, "operator", val)}
-                                        />
-                                    </div>
-                                    <div style={{ flex: 1 }}>
-                                        <TextField
-                                            label="Value"
-                                            labelHidden
-                                            value={condition.value}
-                                            onChange={(val) => updateCondition(index, "value", val)}
-                                            autoComplete="off"
-                                        />
-                                    </div>
-                                    <Button icon={DeleteIcon} onClick={() => removeCondition(index)} tone="critical" variant="plain" />
-                                </InlineStack>
-                            </div>
-                        ))}
-                        <Button onClick={addCondition} variant="plain" icon={PlusIcon}>Add Condition</Button>
-
-                        <TextField
-                            label="Tags to Apply (comma separated)"
-                            value={formData.tags.join(", ")}
-                            onChange={(val) => setFormData({ ...formData, tags: val.split(",").map(t => t.trim()) })}
-                            autoComplete="off"
-                            helpText="Tags will be added when conditions match, and REMOVED when they don't."
-                        />
-
-                        <Select
-                            label="Status"
-                            options={[{ label: "Active", value: "true" }, { label: "Inactive", value: "false" }]}
-                            value={String(formData.isEnabled)}
-                            onChange={(val) => setFormData({ ...formData, isEnabled: val === "true" })}
-                        />
-                    </FormLayout>
+                            </FormLayout>
+                        </Box>
+                    </BlockStack>
                 </Modal.Section>
             </Modal>
 

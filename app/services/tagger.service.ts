@@ -281,55 +281,56 @@ export class TaggerService {
             return true;
         }
 
-        const check = (condition: any) => {
-            const resourceValue = TaggerService.getNestedValue(resource, condition.field);
-            const targetValue = condition.value;
-
+        const checkSingleValue = (resourceValue: any, targetValue: any, operator: string): boolean => {
             const numResource = parseFloat(resourceValue);
             const numTarget = parseFloat(targetValue);
             const isNumberCompare = !isNaN(numResource) && !isNaN(numTarget);
 
-            let result = false;
-
-            switch (condition.operator) {
+            switch (operator) {
                 case 'equals':
-                    result = String(resourceValue).toLowerCase() === String(targetValue).toLowerCase();
-                    break;
+                    return String(resourceValue).toLowerCase() === String(targetValue).toLowerCase();
                 case 'not_equals':
-                    result = String(resourceValue).toLowerCase() !== String(targetValue).toLowerCase();
-                    break;
+                    return String(resourceValue).toLowerCase() !== String(targetValue).toLowerCase();
                 case 'contains':
-                    result = String(resourceValue).toLowerCase().includes(String(targetValue).toLowerCase());
-                    break;
+                    return String(resourceValue).toLowerCase().includes(String(targetValue).toLowerCase());
                 case 'starts_with':
-                    result = String(resourceValue).toLowerCase().startsWith(String(targetValue).toLowerCase());
-                    break;
+                    return String(resourceValue).toLowerCase().startsWith(String(targetValue).toLowerCase());
                 case 'ends_with':
-                    result = String(resourceValue).toLowerCase().endsWith(String(targetValue).toLowerCase());
-                    break;
+                    return String(resourceValue).toLowerCase().endsWith(String(targetValue).toLowerCase());
                 case 'greater_than':
-                    result = isNumberCompare && numResource > numTarget;
-                    break;
+                    return isNumberCompare && numResource > numTarget;
                 case 'less_than':
-                    result = isNumberCompare && numResource < numTarget;
-                    break;
+                    return isNumberCompare && numResource < numTarget;
                 case 'in':
                     const options = String(targetValue).split(',').map(s => s.trim().toLowerCase());
-                    result = options.includes(String(resourceValue).toLowerCase());
-                    break;
+                    return options.includes(String(resourceValue).toLowerCase());
                 case 'not_in':
                     const notOptions = String(targetValue).split(',').map(s => s.trim().toLowerCase());
-                    result = !notOptions.includes(String(resourceValue).toLowerCase());
-                    break;
+                    return !notOptions.includes(String(resourceValue).toLowerCase());
                 case 'is_empty':
-                    result = !resourceValue || String(resourceValue).trim() === "";
-                    break;
+                    return !resourceValue || String(resourceValue).trim() === "";
                 case 'is_not_empty':
-                    result = !!resourceValue && String(resourceValue).trim() !== "";
-                    break;
+                    return !!resourceValue && String(resourceValue).trim() !== "";
+                default:
+                    return false;
+            }
+        };
+
+        const check = (condition: any) => {
+            const resourceValue = TaggerService.getNestedValue(resource, condition.field);
+            const targetValue = condition.value;
+
+            if (Array.isArray(resourceValue)) {
+                // If the field matches multiple values (e.g. line_items.sku), check if ANY matches
+                // Unless operator is is_empty/is_not_empty which checks the array itself? 
+                // Actually for is_empty, if array is empty it's empty.
+                if (condition.operator === 'is_empty') return resourceValue.length === 0;
+                if (condition.operator === 'is_not_empty') return resourceValue.length > 0;
+
+                return resourceValue.some(val => checkSingleValue(val, targetValue, condition.operator));
             }
 
-            return result;
+            return checkSingleValue(resourceValue, targetValue, condition.operator);
         };
 
         if (logic === 'OR') {
@@ -339,9 +340,33 @@ export class TaggerService {
         }
     }
 
-    private static getNestedValue(obj: any, path: string) {
+    private static getNestedValue(obj: any, path: string): any {
+        if (!path) return "";
         try {
-            return path.split('.').reduce((acc, part) => acc && acc[part], obj) ?? "";
+            const parts = path.split('.');
+            let current: any = obj;
+
+            for (let i = 0; i < parts.length; i++) {
+                const part = parts[i];
+
+                // Handle array index like shipping_lines[0]
+                if (part.includes('[') && part.endsWith(']')) {
+                    const [name, indexStr] = part.split('[');
+                    const index = parseInt(indexStr.replace(']', ''));
+                    current = current && current[name] ? current[name][index] : undefined;
+                } else {
+                    // Handle array mapping: if current is array, map the property
+                    if (Array.isArray(current)) {
+                        // Flatten if necessary, but for now just map
+                        current = current.map(item => item ? item[part] : undefined).filter(v => v !== undefined);
+                    } else {
+                        current = current ? current[part] : undefined;
+                    }
+                }
+
+                if (current === undefined) return "";
+            }
+            return current;
         } catch (e) {
             return "";
         }
