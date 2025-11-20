@@ -49,6 +49,8 @@ export class ActivityService {
             status?: string[];
             search?: string;
             page?: number;
+            startDate?: Date;
+            endDate?: Date;
         }
     ) {
         const query: any = { shop };
@@ -69,6 +71,17 @@ export class ActivityService {
                 { action: { $regex: filters.search, $options: 'i' } },
                 { 'details.message': { $regex: filters.search, $options: 'i' } },
             ];
+        }
+
+        // Date range filter
+        if (filters?.startDate || filters?.endDate) {
+            query.timestamp = {};
+            if (filters.startDate) {
+                query.timestamp.$gte = filters.startDate;
+            }
+            if (filters.endDate) {
+                query.timestamp.$lte = filters.endDate;
+            }
         }
 
         // Pagination

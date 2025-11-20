@@ -15,8 +15,13 @@ import {
     Tooltip,
     List,
     Pagination,
+    Popover,
+    ActionList,
+    Icon,
+    ButtonGroup,
 } from "@shopify/polaris";
-import { useCallback, useEffect } from "react";
+import { CalendarIcon } from '@shopify/polaris-icons';
+import { useCallback, useEffect, useState } from "react";
 import { authenticate } from "../shopify.server";
 import { ActivityService } from "../services/activity.service";
 import { RevertService } from "../services/revert.service";
@@ -32,6 +37,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const search = url.searchParams.get('search') || '';
     const page = parseInt(url.searchParams.get('page') || '1');
     const limit = parseInt(url.searchParams.get('limit') || '50');
+    const dateRange = url.searchParams.get('dateRange') || '';
+
+    // Calculate date range
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+    if (dateRange) {
+        endDate = new Date();
+        switch (dateRange) {
+            case 'today':
+                startDate = new Date();
+                startDate.setHours(0, 0, 0, 0);
+                break;
+            case '7days':
+                startDate = new Date();
+                startDate.setDate(startDate.getDate() - 7);
+                break;
+            case '1month':
+                startDate = new Date();
+                startDate.setMonth(startDate.getMonth() - 1);
+                break;
+        }
+    }
 
     // Get logs with server-side filtering and pagination
     const result = await ActivityService.getLogs(session.shop, limit, {
@@ -39,6 +66,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         status: status.length > 0 ? status : undefined,
         search: search || undefined,
         page,
+        startDate,
+        endDate,
     });
     const logs = result.logs;
 
@@ -59,7 +88,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
             totalPages: result.totalPages,
             totalLogs: result.totalCount,
             limit,
-        }
+        },
+        dateRange,
     });
 };
 
@@ -92,11 +122,12 @@ const ACTION_CATEGORIES = {
 };
 
 export default function Activity() {
-    const { logs, pagination } = useLoaderData<typeof loader>();
+    const { logs, pagination, dateRange } = useLoaderData<typeof loader>();
     const submit = useSubmit();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const revalidator = useRevalidator();
+    const [datePopoverActive, setDatePopoverActive] = useState(false);
 
     useEffect(() => {
         const interval = setInterval(() => {
@@ -126,6 +157,7 @@ export default function Activity() {
         search?: string;
         status?: string[];
         page?: number;
+        dateRange?: string;
     }) => {
         const params = new URLSearchParams(searchParams);
 
@@ -158,6 +190,14 @@ export default function Activity() {
                 params.set('page', updates.page.toString());
             } else {
                 params.delete('page');
+            }
+        }
+
+        if (updates.dateRange !== undefined) {
+            if (updates.dateRange) {
+                params.set('dateRange', updates.dateRange);
+            } else {
+                params.delete('dateRange');
             }
         }
 
@@ -294,8 +334,74 @@ export default function Activity() {
 
     const { mode, setMode } = useSetIndexFiltersMode();
 
+    // Get date range label
+    const getDateRangeLabel = () => {
+        switch (dateRange) {
+            case 'today': return 'Today';
+            case '7days': return 'Last 7 Days';
+            case '1month': return 'Last Month';
+            default: return 'All Time';
+        }
+    };
+
+    // Date range popover activator
+    const dateRangeActivator = (
+        <Button
+            onClick={() => setDatePopoverActive(!datePopoverActive)}
+            disclosure={datePopoverActive ? 'up' : 'down'}
+            icon={CalendarIcon}
+        >
+            {getDateRangeLabel()}
+        </Button>
+    );
+    const secondaryActions = (
+        <ButtonGroup>
+            <Popover
+                active={datePopoverActive}
+                activator={dateRangeActivator}
+                onClose={() => setDatePopoverActive(false)}
+            >
+                <ActionList
+                    items={[
+                        {
+                            content: 'All Time',
+                            onAction: () => {
+                                updateFilters({ dateRange: '' });
+                                setDatePopoverActive(false);
+                            },
+                        },
+                        {
+                            content: 'Today',
+                            onAction: () => {
+                                updateFilters({ dateRange: 'today' });
+                                setDatePopoverActive(false);
+                            },
+                        },
+                        {
+                            content: 'Last 7 Days',
+                            onAction: () => {
+                                updateFilters({ dateRange: '7days' });
+                                setDatePopoverActive(false);
+                            },
+                        },
+                        {
+                            content: 'Last Month',
+                            onAction: () => {
+                                updateFilters({ dateRange: '1month' });
+                                setDatePopoverActive(false);
+                            },
+                        },
+                    ]}
+                />
+            </Popover>
+        </ButtonGroup>
+    );
     return (
-        <Page title="Activity Log">
+        <Page
+            title="Activity Log"
+            filterActions={true}
+            secondaryActions={secondaryActions}
+        >
             <Layout>
                 <Layout.Section>
                     <Card padding="0">
