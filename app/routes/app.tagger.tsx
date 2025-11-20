@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
 import {
     Page,
     Layout,
@@ -17,13 +17,14 @@ import {
     Select,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { TaggingRule } from "../db.server";
+import { TaggerService } from "../services/tagger.service";
+import { useAppBridge } from "@shopify/app-bridge-react";
 
 // --- Backend Logic ---
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { session } = await authenticate.admin(request);
-    const rules = await TaggingRule.find({ shop: session.shop });
+    const rules = await TaggerService.getRules(session.shop);
     return json({ rules });
 };
 
@@ -37,11 +38,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const isEnabled = formData.get("isEnabled") === "true";
         const params = JSON.parse(formData.get("params") as string);
 
-        await TaggingRule.findOneAndUpdate(
-            { shop: session.shop, ruleId },
-            { isEnabled, params, updatedAt: new Date() },
-            { upsert: true, new: true }
-        );
+        await TaggerService.saveRule(session.shop, ruleId, isEnabled, params);
     }
 
     return json({ status: "success" });
@@ -84,6 +81,8 @@ const RECIPES = [
 
 export default function SmartTagger() {
     const { rules } = useLoaderData<typeof loader>();
+    const actionData = useActionData<typeof action>();
+    const shopify = useAppBridge();
     const submit = useSubmit();
     const nav = useNavigation();
     const isLoading = nav.state === "submitting";
@@ -91,6 +90,12 @@ export default function SmartTagger() {
     const [selectedRule, setSelectedRule] = useState<any>(null);
     const [modalOpen, setModalOpen] = useState(false);
     const [formParams, setFormParams] = useState<any>({});
+
+    useEffect(() => {
+        if (actionData?.status === "success") {
+            shopify.toast.show("Rule updated successfully");
+        }
+    }, [actionData, shopify]);
 
     const handleConfigure = (recipe: any) => {
         const existingRule = rules.find((r: any) => r.ruleId === recipe.id);

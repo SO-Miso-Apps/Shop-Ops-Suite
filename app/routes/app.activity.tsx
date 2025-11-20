@@ -15,26 +15,16 @@ import {
 } from "@shopify/polaris";
 import { useState, useCallback } from "react";
 import { authenticate } from "../shopify.server";
-import { ActivityLog } from "../db.server";
+import { ActivityService } from "../services/activity.service";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { session } = await authenticate.admin(request);
 
     // Simple pagination (first 50) for MVP
-    const logs = await ActivityLog.find({ shop: session.shop })
-        .sort({ timestamp: -1 })
-        .limit(50);
+    const logs = await ActivityService.getLogs(session.shop, 50);
 
     return json({
-        logs: logs.map((log: any) => ({
-            id: log._id.toString(),
-            resourceType: log.resourceType,
-            resourceId: log.resourceId,
-            action: log.action,
-            detail: log.detail,
-            status: log.status,
-            timestamp: log.timestamp,
-        }))
+        logs
     });
 };
 
@@ -140,7 +130,7 @@ export default function Activity() {
         <Page title="Activity Log">
             <Layout>
                 <Layout.Section>
-                    <Card>
+                    <Card padding="0">
                         <Filters
                             queryValue={queryValue}
                             filters={filters}

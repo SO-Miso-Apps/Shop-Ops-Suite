@@ -1,6 +1,6 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
 import {
     Page,
     Layout,
@@ -23,11 +23,12 @@ import {
 } from "@shopify/polaris";
 import { PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
-import { MetafieldRule } from "../db.server";
+import { MetafieldService } from "../services/metafield.service";
+import { useAppBridge } from "@shopify/app-bridge-react";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { session } = await authenticate.admin(request);
-    const rules = await MetafieldRule.find({ shop: session.shop }).sort({ createdAt: -1 });
+    const rules = await MetafieldService.getRules(session.shop);
     return json({ rules });
 };
 
@@ -40,23 +41,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const ruleData = JSON.parse(formData.get("rule") as string);
 
         if (ruleData._id) {
-            await MetafieldRule.findByIdAndUpdate(ruleData._id, {
-                ...ruleData,
-                updatedAt: new Date()
-            });
+            await MetafieldService.updateRule(ruleData._id, ruleData);
         } else {
-            await MetafieldRule.create({
-                shop: session.shop,
-                ...ruleData
-            });
+            await MetafieldService.createRule(session.shop, ruleData);
         }
     } else if (actionType === "deleteRule") {
         const id = formData.get("id") as string;
-        await MetafieldRule.findByIdAndDelete(id);
+        await MetafieldService.deleteRule(id);
     } else if (actionType === "toggleRule") {
         const id = formData.get("id") as string;
         const isEnabled = formData.get("isEnabled") === "true";
-        await MetafieldRule.findByIdAndUpdate(id, { isEnabled });
+        await MetafieldService.toggleRule(id, isEnabled);
     }
 
     return json({ status: "success" });
@@ -64,11 +59,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function MetafieldRules() {
     const { rules } = useLoaderData<typeof loader>();
+    const actionData = useActionData<typeof action>();
+    const shopify = useAppBridge();
     const submit = useSubmit();
     const nav = useNavigation();
     const isSaving = nav.state === "submitting";
 
     const [modalOpen, setModalOpen] = useState(false);
+    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [selectedRuleToDelete, setSelectedRuleToDelete] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (actionData?.status === "success") {
+            shopify.toast.show("Action completed successfully");
+        }
+    }, [actionData, shopify]);
 
     // Initial State template
     const initialRuleState = {
@@ -144,8 +149,15 @@ export default function MetafieldRules() {
     };
 
     const handleDelete = (id: string) => {
-        if (confirm("Are you sure you want to delete this rule?")) {
-            submit({ actionType: "deleteRule", id }, { method: "post" });
+        setSelectedRuleToDelete(id);
+        setDeleteModalOpen(true);
+    };
+
+    const confirmDelete = () => {
+        if (selectedRuleToDelete) {
+            submit({ actionType: "deleteRule", id: selectedRuleToDelete }, { method: "post" });
+            setDeleteModalOpen(false);
+            setSelectedRuleToDelete(null);
         }
     };
 
@@ -397,6 +409,28 @@ export default function MetafieldRules() {
                             />
                         </BlockStack>
                     </BlockStack>
+                </Modal.Section>
+            </Modal>
+            <Modal
+                open={deleteModalOpen}
+                onClose={() => setDeleteModalOpen(false)}
+                title="Delete Rule?"
+                primaryAction={{
+                    content: "Delete",
+                    onAction: confirmDelete,
+                    destructive: true,
+                }}
+                secondaryActions={[
+                    {
+                        content: "Cancel",
+                        onAction: () => setDeleteModalOpen(false),
+                    },
+                ]}
+            >
+                <Modal.Section>
+                    <Text as="p">
+                        Are you sure you want to delete this rule? This action cannot be undone.
+                    </Text>
                 </Modal.Section>
             </Modal>
         </Page>

@@ -36,13 +36,13 @@ if (process.env.NODE_ENV !== "production") {
     if (global.__cleanerWorker) global.__cleanerWorker.close();
 }
 
-import { processWebhookJob as taggerProcessor } from "./services/tagger.server";
+import { TaggerService } from "./services/tagger.service";
 import { processBulkJob as bulkProcessor } from "./services/bulk.server";
-import { processCleanerJob as cleanerProcessor } from "./services/cleaner.server";
+import { CleanerService } from "./services/cleaner.service";
 
 const processWebhookJob = async (job: Job) => {
     console.log(`Processing webhook job ${job.id}:`, job.name);
-    await taggerProcessor(job);
+    await TaggerService.processWebhookJob(job);
     return { status: "processed" };
 };
 
@@ -61,7 +61,7 @@ const processCronJob = async (job: Job) => {
 
 const processCleanerJob = async (job: Job) => {
     console.log(`Processing cleaner job ${job.id}:`, job.name);
-    await cleanerProcessor(job);
+    await CleanerService.processCleanerJob(job);
     return { status: "processed" };
 };
 

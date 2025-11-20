@@ -21,6 +21,8 @@ import {
 import { useState, useEffect } from "react";
 import { authenticate } from "../shopify.server";
 import { cleanerQueue } from "../queue.server";
+import { CleanerService } from "../services/cleaner.service";
+import { useAppBridge } from "@shopify/app-bridge-react";
 
 export const loader = async ({ request }: { request: Request }) => {
   await authenticate.admin(request);
@@ -40,44 +42,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const MAX_ITEMS = 2000;
     const allTags: string[] = [];
 
-    // 1. Helper function to fetch items with cursor
+    // 1. Use CleanerService to scan tags
     const fetchTags = async (resourceType: "products" | "customers", limit: number) => {
-      let hasNextPage = true;
-      let cursor = null;
-      let count = 0;
-
-      while (hasNextPage && count < limit) {
-        const query = `#graphql
-          query get${resourceType}($cursor: String) {
-            ${resourceType}(first: 250, after: $cursor) {
-              pageInfo {
-                hasNextPage
-                endCursor
-              }
-              nodes {
-                tags
-              }
-            }
-          }
-        `;
-
-        try {
-          const response: any = await admin.graphql(query, { variables: { cursor } });
-          const data: any = await response.json();
-
-          const nodes = data.data[resourceType].nodes;
-          nodes.forEach((node: any) => allTags.push(...node.tags));
-
-          const pageInfo: any = data.data[resourceType].pageInfo;
-          hasNextPage = pageInfo.hasNextPage;
-          cursor = pageInfo.endCursor;
-          count += nodes.length;
-
-        } catch (e) {
-          console.error(`Error scanning ${resourceType}:`, e);
-          hasNextPage = false;
-        }
-      }
+      const { count, tags } = await CleanerService.scanTags(admin, resourceType, limit);
+      allTags.push(...tags);
       return count;
     };
 
@@ -156,6 +124,7 @@ export default function DataCleaner() {
     message?: string;
   };
 
+  const shopify = useAppBridge();
   const submit = useSubmit();
   const nav = useNavigation();
   const isLoading = nav.state === "submitting";
@@ -176,6 +145,12 @@ export default function DataCleaner() {
       setProgress(100);
     }
   }, [isLoading]);
+
+  useEffect(() => {
+    if (actionData?.status === "queued") {
+      shopify.toast.show("Cleanup job started");
+    }
+  }, [actionData, shopify]);
 
   const results = actionData?.results;
   const isCleaned = actionData?.status === "queued";
@@ -303,7 +278,7 @@ export default function DataCleaner() {
                             disabled={selectedTags.length === 0}
                             loading={isLoading}
                           >
-                            Clean {selectedTags.length} Selected Tags
+                            Clean {'' + selectedTags.length} Selected Tags
                           </Button>
                         </InlineStack>
                       </Box>

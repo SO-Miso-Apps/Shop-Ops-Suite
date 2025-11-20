@@ -15,11 +15,11 @@ import {
   Divider,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { getDashboardData } from "../services/dashboard.server";
+import { DashboardService } from "../services/dashboard.service";
 
 export const loader = async ({ request }: { request: Request }) => {
   const { admin, session } = await authenticate.admin(request);
-  const data = await getDashboardData(admin, session.shop);
+  const data = await DashboardService.getDashboardData(admin, session.shop);
   return json(data);
 };
 
