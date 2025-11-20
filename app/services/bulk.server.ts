@@ -3,6 +3,99 @@ import { ActivityLog } from "../db.server";
 import { BulkOperationService } from "./bulk_operation.service";
 import { bulkQueue } from "../queues";
 import { Backup } from "../models/Backup";
+import { UsageService } from "./usage.service";
+
+/**
+ * Dry run: Query items that would be affected by the operation
+ */
+export async function dryRunTagOperation(
+  shop: string,
+  resourceType: "products" | "customers" | "orders",
+  operation: "replace" | "add" | "remove",
+  findTag: string,
+  replaceTag?: string
+): Promise<{
+  count: number;
+  preview: Array<{ id: string; title?: string; tags: string[] }>;
+}> {
+  // Build query based on operation
+  let query = "";
+
+  if (operation === "replace" || operation === "remove") {
+    query = `tag:${findTag}`;
+  } else if (operation === "add") {
+    // For add operation, query all items (we'll add tag to those that don't have it)
+    // But we can't query "NOT tag:X" efficiently in bulk, so we query all and filter
+    // For simplicity, let's just query items WITHOUT the tag
+    query = `NOT tag:${findTag}`;
+  }
+
+  // Construct GraphQL query with title/name field for preview
+  const titleField = resourceType === "products" ? "title" : resourceType === "customers" ? "displayName" : "name";
+  const graphqlQuery = `
+  {
+      ${resourceType}(query: "${query}") {
+          edges {
+              node {
+                  id
+                  ${titleField}
+                  tags
+              }
+          }
+      }
+  }`;
+
+  const bulkOp = await BulkOperationService.runBulkQuery(shop, graphqlQuery);
+
+  // Poll until complete
+  let pollCount = 0;
+  const maxPolls = 60; // 5 minutes max
+  let result: any;
+
+  while (pollCount < maxPolls) {
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    result = await BulkOperationService.pollBulkOperation(shop, bulkOp.id);
+
+    if (result.status === "COMPLETED") break;
+    if (result.status === "FAILED" || result.status === "CANCELED") {
+      throw new Error(`Bulk query ${result.status.toLowerCase()}`);
+    }
+
+    pollCount++;
+  }
+
+  if (result.status !== "COMPLETED") {
+    throw new Error("Bulk query timeout");
+  }
+
+  // Check if URL exists before trying to fetch
+  if (!result.url) {
+    // No results found - return empty
+    return {
+      count: 0,
+      preview: [],
+    };
+  }
+
+  // Download and parse results
+  const response = await fetch(result.url);
+  const jsonlText = await response.text();
+  const lines = jsonlText.split("\n").filter(line => line.trim() !== "");
+
+  const items = lines.map(line => {
+    const item = JSON.parse(line);
+    return {
+      id: item.id,
+      title: item.title || item.displayName || item.name || "Untitled",
+      tags: item.tags || [],
+    };
+  });
+
+  return {
+    count: items.length,
+    preview: items.slice(0, 10), // First 10 items
+  };
+}
 
 export async function processBulkJob(job: any) {
   const { shop, resourceType, findTag, replaceTag, operation, step = 'init', operationId, mutationOpId } = job.data;
@@ -68,6 +161,20 @@ export async function processBulkJob(job: any) {
     // --- STEP 3: PROCESSING & MUTATION ---
     if (step === 'processing') {
       const { resultUrl } = job.data;
+
+      // Check if resultUrl exists before trying to fetch
+      if (!resultUrl) {
+        await ActivityLog.create({
+          shop,
+          resourceType,
+          resourceId: "Bulk",
+          action: "Bulk Operation",
+          detail: `No results available for tag operation '${findTag}'`,
+          status: "Failed",
+        });
+        return;
+      }
+
       const response = await fetch(resultUrl);
       const jsonlText = await response.text();
       const lines = jsonlText.split('\n').filter(line => line.trim() !== '');
@@ -185,6 +292,9 @@ export async function processBulkJob(job: any) {
       }
 
       if (bulkOp.status === 'COMPLETED') {
+        // Record usage
+        await UsageService.recordOperation(shop, count);
+
         // We could check for errors in the result file, but for MVP we assume success if no system errors.
         await ActivityLog.create({
           shop,

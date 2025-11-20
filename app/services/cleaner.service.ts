@@ -3,6 +3,7 @@ import { ActivityLog } from "../models/ActivityLog";
 import { BulkOperationService } from "./bulk_operation.service";
 import { cleanerQueue } from "../queues";
 import { Backup } from "../models/Backup";
+import { UsageService } from "./usage.service";
 
 export class CleanerService {
     // Kept for backward compatibility or small tasks if needed, but cleaner job uses processCleanerJob
@@ -165,6 +166,9 @@ export class CleanerService {
                 }
 
                 if (bulkOp.status === 'COMPLETED') {
+                    // Record usage
+                    await UsageService.recordOperation(shop, count);
+
                     await ActivityLog.create({
                         shop,
                         resourceType: "Mixed",

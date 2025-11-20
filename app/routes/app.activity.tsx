@@ -1,5 +1,5 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigate, useSearchParams } from "@remix-run/react";
 import {
     Page,
     Layout,
@@ -8,14 +8,13 @@ import {
     Text,
     Badge,
     useIndexResourceState,
-    Filters,
     ChoiceList,
+    IndexFilters,
     type IndexFiltersProps,
     useSetIndexFiltersMode,
     Button,
-    ButtonGroup,
 } from "@shopify/polaris";
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import { ActivityService } from "../services/activity.service";
 import { RevertService } from "../services/revert.service";
@@ -24,8 +23,18 @@ import { Backup } from "../models/Backup";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { session } = await authenticate.admin(request);
 
-    // Simple pagination (first 50) for MVP
-    const logs = await ActivityService.getLogs(session.shop, 50);
+    // Parse URL params for filters
+    const url = new URL(request.url);
+    const category = url.searchParams.get('category') || 'All';
+    const status = url.searchParams.get('status')?.split(',').filter(Boolean) || [];
+    const search = url.searchParams.get('search') || '';
+
+    // Get logs with server-side filtering
+    const logs = await ActivityService.getLogs(session.shop, 50, {
+        category: category !== 'All' ? category : undefined,
+        status: status.length > 0 ? status : undefined,
+        search: search || undefined,
+    });
 
     // Check for backups
     const logsWithBackup = await Promise.all(logs.map(async (log: any) => {
@@ -60,9 +69,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return null;
 };
 
+// Action categories for tabs
+const ACTION_CATEGORIES = {
+    "All": ["*"],
+    "Tags": ["Smart Tag Applied", "Tag Cleanup", "Bulk Tag Update", "Auto-Tag"],
+    "Bulk Operations": ["Bulk Operation", "Bulk Tag Update", "Bulk Update"],
+    "Metafields": ["Metafield Updated", "Metafield Created", "COGS Updated"],
+    "Data Cleaning": ["Tag Cleanup", "Data Cleanup"],
+    "System": ["Webhook Received", "Job Queued", "Job Completed"],
+};
+
 export default function Activity() {
     const { logs } = useLoaderData<typeof loader>();
     const submit = useSubmit();
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
 
     const resourceName = {
         singular: 'log',
@@ -72,24 +93,71 @@ export default function Activity() {
     const { selectedResources, allResourcesSelected, handleSelectionChange } =
         useIndexResourceState(logs);
 
-    // Filtering State
-    const [queryValue, setQueryValue] = useState('');
-    const [statusFilter, setStatusFilter] = useState<string[]>([]);
+    // Get filter state from URL params
+    const currentCategory = searchParams.get('category') || 'All';
+    const currentSearch = searchParams.get('search') || '';
+    const currentStatus = searchParams.get('status')?.split(',').filter(Boolean) || [];
+
+    // Find selected tab index from category
+    const categoryKeys = Object.keys(ACTION_CATEGORIES);
+    const selectedTab = categoryKeys.indexOf(currentCategory);
+
+    // Update URL with new filters (triggers loader refresh)
+    const updateFilters = useCallback((updates: {
+        category?: string;
+        search?: string;
+        status?: string[];
+    }) => {
+        const params = new URLSearchParams(searchParams);
+
+        if (updates.category !== undefined) {
+            if (updates.category === 'All') {
+                params.delete('category');
+            } else {
+                params.set('category', updates.category);
+            }
+        }
+
+        if (updates.search !== undefined) {
+            if (updates.search) {
+                params.set('search', updates.search);
+            } else {
+                params.delete('search');
+            }
+        }
+
+        if (updates.status !== undefined) {
+            if (updates.status.length > 0) {
+                params.set('status', updates.status.join(','));
+            } else {
+                params.delete('status');
+            }
+        }
+
+        navigate(`?${params.toString()}`, { replace: true });
+    }, [navigate, searchParams]);
 
     const handleFiltersQueryChange = useCallback(
-        (value: string) => setQueryValue(value),
-        [],
+        (value: string) => updateFilters({ search: value }),
+        [updateFilters],
     );
 
     const handleStatusFilterChange = useCallback(
-        (value: string[]) => setStatusFilter(value),
-        [],
+        (value: string[]) => updateFilters({ status: value }),
+        [updateFilters],
+    );
+
+    const handleTabChange = useCallback(
+        (tabIndex: number) => {
+            const category = categoryKeys[tabIndex];
+            updateFilters({ category });
+        },
+        [categoryKeys, updateFilters],
     );
 
     const handleFiltersClearAll = useCallback(() => {
-        handleFiltersQueryChange('');
-        handleStatusFilterChange([]);
-    }, [handleFiltersQueryChange, handleStatusFilterChange]);
+        navigate('/app/activity', { replace: true });
+    }, [navigate]);
 
     const handleRevert = (jobId: string) => {
         if (confirm("Are you sure you want to revert this bulk operation? This will restore the original tags.")) {
@@ -97,6 +165,7 @@ export default function Activity() {
         }
     };
 
+    // IndexFilters configuration
     const filters = [
         {
             key: 'status',
@@ -108,8 +177,9 @@ export default function Activity() {
                     choices={[
                         { label: 'Success', value: 'Success' },
                         { label: 'Failed', value: 'Failed' },
+                        { label: 'Pending', value: 'Pending' },
                     ]}
-                    selected={statusFilter || []}
+                    selected={currentStatus}
                     onChange={handleStatusFilterChange}
                     allowMultiple
                 />
@@ -119,24 +189,23 @@ export default function Activity() {
     ];
 
     const appliedFilters: IndexFiltersProps['appliedFilters'] = [];
-    if (statusFilter.length > 0) {
-        const key = 'status';
+    if (currentStatus.length > 0) {
         appliedFilters.push({
-            key,
-            label: `Status: ${statusFilter.join(', ')}`,
+            key: 'status',
+            label: `Status: ${currentStatus.join(', ')}`,
             onRemove: () => handleStatusFilterChange([]),
         });
     }
 
-    // Filter Logic (Client-side for MVP)
-    const filteredLogs = logs.filter((log: any) => {
-        const matchesQuery = log.detail.toLowerCase().includes(queryValue.toLowerCase()) ||
-            log.action.toLowerCase().includes(queryValue.toLowerCase());
-        const matchesStatus = statusFilter.length === 0 || statusFilter.includes(log.status);
-        return matchesQuery && matchesStatus;
-    });
+    // Create tabs for IndexFilters
+    const tabs = categoryKeys.map((category) => ({
+        content: category,
+        index: categoryKeys.indexOf(category),
+        id: category.toLowerCase().replace(/\s+/g, '-'),
+    }));
 
-    const rowMarkup = filteredLogs.map(
+    // No client-side filtering - logs already filtered by backend
+    const rowMarkup = logs.map(
         ({ id, resourceType, resourceId, action, detail, status, timestamp, hasBackup, jobId }: any, index: number) => (
             <IndexTable.Row
                 id={id}
@@ -152,7 +221,7 @@ export default function Activity() {
                 <IndexTable.Cell>{resourceType}</IndexTable.Cell>
                 <IndexTable.Cell>{detail}</IndexTable.Cell>
                 <IndexTable.Cell>
-                    <Badge tone={status === 'Success' ? 'success' : 'critical'}>
+                    <Badge tone={status === 'Success' ? 'success' : status === 'Failed' ? 'critical' : 'info'}>
                         {status}
                     </Badge>
                 </IndexTable.Cell>
@@ -175,17 +244,24 @@ export default function Activity() {
             <Layout>
                 <Layout.Section>
                     <Card padding="0">
-                        <Filters
-                            queryValue={queryValue}
-                            filters={filters}
-                            appliedFilters={appliedFilters}
+                        <IndexFilters
+                            queryValue={currentSearch}
+                            queryPlaceholder="Search activities..."
                             onQueryChange={handleFiltersQueryChange}
                             onQueryClear={() => handleFiltersQueryChange('')}
+                            filters={filters}
+                            appliedFilters={appliedFilters}
                             onClearAll={handleFiltersClearAll}
+                            mode={mode}
+                            setMode={setMode}
+                            tabs={tabs}
+                            selected={selectedTab >= 0 ? selectedTab : 0}
+                            onSelect={handleTabChange}
+                            canCreateNewView={false}
                         />
                         <IndexTable
                             resourceName={resourceName}
-                            itemCount={filteredLogs.length}
+                            itemCount={logs.length}
                             selectedItemsCount={
                                 allResourcesSelected ? 'All' : selectedResources.length
                             }
@@ -198,6 +274,13 @@ export default function Activity() {
                                 { title: 'Time' },
                                 { title: 'Actions' },
                             ]}
+                            emptyState={
+                                <div style={{ padding: '40px', textAlign: 'center' }}>
+                                    <Text as="p" tone="subdued">
+                                        No {currentCategory.toLowerCase()} activities found
+                                    </Text>
+                                </div>
+                            }
                         >
                             {rowMarkup}
                         </IndexTable>

@@ -1,5 +1,5 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { useActionData, useNavigation, useSubmit } from "@remix-run/react";
+import { useActionData, useNavigation, useSubmit, useLoaderData } from "@remix-run/react";
 import {
   Banner,
   BlockStack,
@@ -23,10 +23,18 @@ import { authenticate } from "../shopify.server";
 import { cleanerQueue } from "../queue.server";
 import { CleanerService } from "../services/cleaner.service";
 import { useAppBridge } from "@shopify/app-bridge-react";
+import { UsageService } from "../services/usage.service";
+import { getPlan } from "~/utils/get-plan";
 
 export const loader = async ({ request }: { request: Request }) => {
-  await authenticate.admin(request);
-  return json({});
+  const { session } = await authenticate.admin(request);
+
+  // Get current usage stats
+  const usage = await UsageService.getCurrentUsage(session.shop);
+  const plan = await UsageService.getPlanType(session.shop);
+  const limit = plan === "Free" ? 500 : null;
+
+  return json({ usage, plan, limit });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -41,17 +49,46 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const MAX_ITEMS = 2000;
     const allTags: string[] = [];
+    const itemsWithTags: Array<{ id: string; tags: string[] }> = [];
 
-    // 1. Use CleanerService to scan tags
-    const fetchTags = async (resourceType: "products" | "customers", limit: number) => {
-      const { count, tags } = await CleanerService.scanTags(admin, resourceType, limit);
-      allTags.push(...tags);
-      return count;
+    // 1. Scan tags from products and customers
+    // Note: CleanerService.scanTags currently returns empty, we'll use inline query for now
+    const scanResourceTags = async (resourceType: "products" | "customers", limit: number) => {
+      const query = `
+        query {
+          ${resourceType}(first: 250) {
+            edges {
+              node {
+                id
+                tags
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      `;
+
+      const response = await admin.graphql(query);
+      const data = await response.json();
+      const edges = data.data[resourceType].edges;
+
+      edges.forEach((edge: any) => {
+        const tags = edge.node.tags || [];
+        allTags.push(...tags);
+        if (tags.length > 0) {
+          itemsWithTags.push({ id: edge.node.id, tags });
+        }
+      });
+
+      return edges.length;
     };
 
     // 2. Execute Scan
-    const productCount = await fetchTags("products", MAX_ITEMS);
-    const customerCount = await fetchTags("customers", MAX_ITEMS);
+    const productCount = await scanResourceTags("products", MAX_ITEMS);
+    const customerCount = await scanResourceTags("customers", MAX_ITEMS);
 
     // 3. Analyze Tags
     const uniqueTags = [...new Set(allTags)];
@@ -86,12 +123,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         duplicates: duplicateTags,
         malformed: malformedTags,
         totalScannedTags: uniqueTags.length,
-        itemsScanned: productCount + customerCount
+        itemsScanned: productCount + customerCount,
+        previewItems: itemsWithTags.slice(0, 10), // First 10 items for preview
       }
     });
 
   } else if (actionType === "cleanTags") {
     const tagsToRemove = JSON.parse(formData.get("tags") as string);
+    const affectedCount = parseInt(formData.get("affectedCount") as string);
+
+    // Check quota
+    const quotaCheck = await UsageService.checkQuota(session.shop, affectedCount);
+    if (!quotaCheck.allowed) {
+      return json({
+        status: "quota_exceeded",
+        message: quotaCheck.message,
+        current: quotaCheck.current,
+        limit: quotaCheck.limit,
+      });
+    }
 
     // Dispatch job to BullMQ for background processing
     const job = await cleanerQueue.add("clean-tags", {
@@ -111,6 +161,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function DataCleaner() {
+  const loaderData = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as {
     status?: string;
     results?: {
@@ -118,10 +169,13 @@ export default function DataCleaner() {
       malformed: string[];
       totalScannedTags: number;
       itemsScanned: number;
+      previewItems?: Array<{ id: string; tags: string[] }>;
     };
     count?: number;
     jobId?: string;
     message?: string;
+    current?: number;
+    limit?: number | null;
   };
 
   const shopify = useAppBridge();
@@ -163,11 +217,19 @@ export default function DataCleaner() {
     setIsModalOpen(true);
   };
 
+  // Calculate affected items count for quota check
+  const calculateAffectedCount = () => {
+    // Estimate based on selected tags and scanned items
+    // This is approximate; real count would need a query
+    return results?.itemsScanned || 0;
+  };
+
   const confirmClean = () => {
     submit(
       {
         actionType: "cleanTags",
-        tags: JSON.stringify(selectedTags)
+        tags: JSON.stringify(selectedTags),
+        affectedCount: calculateAffectedCount().toString(),
       },
       { method: "post" }
     );
@@ -182,9 +244,37 @@ export default function DataCleaner() {
     }
   };
 
+  const usagePercent = loaderData.limit
+    ? Math.round((loaderData.usage.count / loaderData.limit) * 100)
+    : 0;
+
   return (
     <Page title="Data Cleaner">
       <Layout>
+        <Layout.Section>
+          {/* Usage Banner */}
+          {loaderData.plan === "Free" && (
+            <Banner
+              tone={usagePercent >= 90 ? "warning" : "info"}
+              title={`${loaderData.plan} Plan - ${loaderData.usage.count}/${loaderData.limit} operations this month`}
+            >
+              <BlockStack gap="200">
+                <ProgressBar progress={usagePercent} size="small" />
+                {usagePercent >= 90 && (
+                  <Text as="p">
+                    You're running low on quota. Upgrade to Pro for unlimited operations.
+                  </Text>
+                )}
+              </BlockStack>
+            </Banner>
+          )}
+
+          {getPlan(loaderData.plan) === "Pro" && (
+            <Banner tone="success" title="Pro Plan - Unlimited Operations">
+              <Text as="p">Enjoy unlimited cleanup operations, backups, and AI insights.</Text>
+            </Banner>
+          )}
+        </Layout.Section>
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
@@ -301,6 +391,15 @@ export default function DataCleaner() {
                   </BlockStack>
                 </Banner>
               )}
+
+              {actionData?.status === "quota_exceeded" && (
+                <Banner tone="critical">
+                  <BlockStack gap="200">
+                    <Text as="p">{actionData.message}</Text>
+                    <Button url="/app/billing">Upgrade to Pro</Button>
+                  </BlockStack>
+                </Banner>
+              )}
             </BlockStack>
           </Card>
         </Layout.Section>
@@ -325,10 +424,28 @@ export default function DataCleaner() {
         <Modal.Section>
           <BlockStack gap="400">
             <Text as="p">
-              Are you sure you want to remove <strong>{selectedTags.length}</strong> tags from <strong>ALL</strong> products and customers?
+              Are you sure you want to remove <strong>{selectedTags.length}</strong> tags from <strong>~{results?.itemsScanned || 0}</strong> scanned items?
             </Text>
+
+            {results?.previewItems && results.previewItems.length > 0 && (
+              <BlockStack gap="200">
+                <Text variant="headingSm" as="h3">Items that will be affected (preview):</Text>
+                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                  <Scrollable style={{ maxHeight: '150px' }} shadow>
+                    <List>
+                      {results.previewItems.slice(0, 5).map(item => (
+                        <List.Item key={item.id}>
+                          <Text as="span" tone="subdued">Tags: {item.tags.join(", ")}</Text>
+                        </List.Item>
+                      ))}
+                    </List>
+                  </Scrollable>
+                </Box>
+              </BlockStack>
+            )}
+
             <Banner tone="warning">
-              This action cannot be undone. The cleanup process will run in the background.
+              This action cannot be undone (except via Backup/Revert for Pro users). The cleanup process will run in the background.
             </Banner>
             <Box padding="400" background="bg-surface-secondary" borderRadius="200">
               <Scrollable style={{ maxHeight: '150px' }} shadow>

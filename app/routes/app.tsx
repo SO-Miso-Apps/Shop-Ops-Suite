@@ -42,6 +42,9 @@ export default function App() {
         <Link to="/app/activity" rel="activity">
           Activity Log
         </Link>
+        <Link to="/app/billing" rel="billing">
+          Billing & Usage
+        </Link>
       </NavMenu>
       <Outlet />
     </AppProvider>

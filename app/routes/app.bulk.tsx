@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
 import {
@@ -12,42 +12,119 @@ import {
     BlockStack,
     Banner,
     Text,
+    Modal,
+    List,
+    InlineStack,
+    ProgressBar,
+    Box,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { bulkQueue } from "../queue.server";
+import { dryRunTagOperation } from "../services/bulk.server";
+import { UsageService } from "../services/usage.service";
+import { getPlan } from "~/utils/get-plan";
 
 export const loader = async ({ request }: { request: Request }) => {
-    await authenticate.admin(request);
-    return json({});
+    const { session } = await authenticate.admin(request);
+
+    // Get current usage stats
+    const usage = await UsageService.getCurrentUsage(session.shop);
+    const plan = await UsageService.getPlanType(session.shop);
+    const limit = plan === "Free" ? 500 : null;
+
+    return json({ usage, plan, limit });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
     const { session } = await authenticate.admin(request);
     const formData = await request.formData();
+    const actionType = formData.get("actionType") as string;
 
-    const resourceType = formData.get("resourceType") as string;
-    const findTag = formData.get("findTag") as string;
-    const replaceTag = formData.get("replaceTag") as string;
-    const operation = formData.get("operation") as string; // 'replace', 'add', 'remove'
+    if (actionType === "dryRun") {
+        const resourceType = formData.get("resourceType") as "products" | "customers" | "orders";
+        const findTag = formData.get("findTag") as string;
+        const replaceTag = formData.get("replaceTag") as string;
+        const operation = formData.get("operation") as "replace" | "add" | "remove";
 
-    // Push to Bulk Queue
-    await bulkQueue.add("bulk-tag-update", {
-        shop: session.shop,
-        resourceType,
-        findTag,
-        replaceTag,
-        operation,
-    });
+        try {
+            const result = await dryRunTagOperation(
+                session.shop,
+                resourceType,
+                operation,
+                findTag,
+                replaceTag
+            );
 
-    return json({ status: "queued" });
+            return json({
+                status: "preview",
+                count: result.count,
+                preview: result.preview,
+                resourceType,
+                operation,
+                findTag,
+                replaceTag,
+            });
+        } catch (error) {
+            return json({
+                status: "error",
+                message: (error as Error).message,
+            });
+        }
+    }
+
+    if (actionType === "execute") {
+        const resourceType = formData.get("resourceType") as string;
+        const findTag = formData.get("findTag") as string;
+        const replaceTag = formData.get("replaceTag") as string;
+        const operation = formData.get("operation") as string;
+        const affectedCount = parseInt(formData.get("affectedCount") as string);
+
+        // Check quota
+        const quotaCheck = await UsageService.checkQuota(session.shop, affectedCount);
+        if (!quotaCheck.allowed) {
+            return json({
+                status: "quota_exceeded",
+                message: quotaCheck.message,
+                current: quotaCheck.current,
+                limit: quotaCheck.limit,
+            });
+        }
+
+        // Push to Bulk Queue
+        await bulkQueue.add("bulk-tag-update", {
+            shop: session.shop,
+            resourceType,
+            findTag,
+            replaceTag,
+            operation,
+        });
+
+        return json({ status: "queued" });
+    }
+
+    return json({});
 };
 
 export default function BulkOperations() {
-    const actionData = useActionData<typeof action>();
+    const loaderData = useLoaderData<typeof loader>();
+    const actionData = useActionData<typeof action>() as {
+        status?: "queued" | "preview" | "quota_exceeded" | "error";
+        count?: number;
+        preview?: Array<{ id: string; title?: string; tags: string[] }>;
+        resourceType?: string;
+        operation?: string;
+        findTag?: string;
+        replaceTag?: string;
+        message?: string;
+        current?: number;
+        limit?: number | null;
+    };
     const submit = useSubmit();
     const nav = useNavigation();
     const isLoading = nav.state === "submitting";
     const isQueued = actionData?.status === "queued";
+    const isPreview = actionData?.status === "preview";
+    const isQuotaExceeded = actionData?.status === "quota_exceeded";
 
     const [formState, setFormState] = useState({
         resourceType: "products",
@@ -56,13 +133,60 @@ export default function BulkOperations() {
         replaceTag: "",
     });
 
-    const handleSubmit = () => {
-        submit(formState, { method: "post" });
+    const [showPreviewModal, setShowPreviewModal] = useState(false);
+
+    useEffect(() => {
+        if (isPreview) {
+            setShowPreviewModal(true);
+        }
+    }, [isPreview]);
+
+    const handleDryRun = () => {
+        const formDataObj = { ...formState, actionType: "dryRun" };
+        submit(formDataObj, { method: "post" });
     };
+
+    const handleExecute = () => {
+        const formDataObj = {
+            ...formState,
+            actionType: "execute",
+            affectedCount: actionData?.count?.toString() || "0",
+        };
+        submit(formDataObj, { method: "post" });
+        setShowPreviewModal(false);
+    };
+
+    const usagePercent = loaderData.limit
+        ? Math.round((loaderData.usage.count / loaderData.limit) * 100)
+        : 0;
 
     return (
         <Page title="Bulk Operations">
             <Layout>
+                <Layout.Section>
+                    {/* Usage Banner */}
+                    {loaderData.plan === "Free" && (
+                        <Banner
+                            tone={usagePercent >= 90 ? "warning" : "info"}
+                            title={`${loaderData.plan} Plan - ${loaderData.usage.count}/${loaderData.limit} operations this month`}
+                        >
+                            <BlockStack gap="200">
+                                <ProgressBar progress={usagePercent} size="small" />
+                                {usagePercent >= 90 && (
+                                    <Text as="p">
+                                        You're running low on quota. Upgrade to Pro for unlimited operations.
+                                    </Text>
+                                )}
+                            </BlockStack>
+                        </Banner>
+                    )}
+
+                    {getPlan(loaderData.plan) === "Pro" && (
+                        <Banner tone="success" title="Pro Plan - Unlimited Operations">
+                            <Text as="p">Enjoy unlimited bulk operations, backups, and AI insights.</Text>
+                        </Banner>
+                    )}
+                </Layout.Section>
                 <Layout.Section>
                     <Card>
                         <BlockStack gap="400">
@@ -74,6 +198,21 @@ export default function BulkOperations() {
                             {isQueued && (
                                 <Banner tone="success" onDismiss={() => window.location.reload()}>
                                     Bulk operation started! Check Activity Log for progress.
+                                </Banner>
+                            )}
+
+                            {isQuotaExceeded && (
+                                <Banner tone="critical">
+                                    <BlockStack gap="200">
+                                        <Text as="p">{actionData.message}</Text>
+                                        <Button url="/app/billing">Upgrade to Pro</Button>
+                                    </BlockStack>
+                                </Banner>
+                            )}
+
+                            {actionData?.status === "error" && (
+                                <Banner tone="critical">
+                                    Error: {actionData.message}
                                 </Banner>
                             )}
 
@@ -120,17 +259,64 @@ export default function BulkOperations() {
 
                                 <Button
                                     variant="primary"
-                                    onClick={handleSubmit}
+                                    onClick={handleDryRun}
                                     loading={isLoading}
                                     disabled={!formState.findTag}
                                 >
-                                    Run Operation
+                                    Preview Operation
                                 </Button>
                             </FormLayout>
                         </BlockStack>
                     </Card>
                 </Layout.Section>
             </Layout>
+
+            {/* Preview Modal */}
+            <Modal
+                open={showPreviewModal}
+                onClose={() => setShowPreviewModal(false)}
+                title="Confirm Bulk Operation"
+                primaryAction={{
+                    content: `Update ${actionData?.count || 0} Items`,
+                    onAction: handleExecute,
+                    loading: isLoading,
+                }}
+                secondaryActions={[
+                    {
+                        content: "Cancel",
+                        onAction: () => setShowPreviewModal(false),
+                    },
+                ]}
+            >
+                <Modal.Section>
+                    <BlockStack gap="400">
+                        <Text as="p">
+                            Found <strong>{actionData?.count || 0}</strong> {actionData?.resourceType} that will be affected by this operation.
+                        </Text>
+
+                        {actionData?.preview && actionData.preview.length > 0 && (
+                            <BlockStack gap="200">
+                                <Text variant="headingSm" as="h3">Preview (first 10 items):</Text>
+                                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                                    <List>
+                                        {actionData.preview.map((item: any) => (
+                                            <List.Item key={item.id}>
+                                                <strong>{item.title}</strong>
+                                                <br />
+                                                <Text as="span" tone="subdued">Tags: {item.tags.join(", ")}</Text>
+                                            </List.Item>
+                                        ))}
+                                    </List>
+                                </Box>
+                            </BlockStack>
+                        )}
+
+                        <Banner tone="warning">
+                            This operation will run in the background and cannot be undone (except via Backup/Revert for Pro users).
+                        </Banner>
+                    </BlockStack>
+                </Modal.Section>
+            </Modal>
         </Page>
     );
 }
