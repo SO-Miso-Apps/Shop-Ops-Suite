@@ -1,5 +1,5 @@
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigate, useSearchParams } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigate, useSearchParams, useRevalidator } from "@remix-run/react";
 import {
     Page,
     Layout,
@@ -13,8 +13,10 @@ import {
     useSetIndexFiltersMode,
     Button,
     Tooltip,
+    List,
+    Pagination,
 } from "@shopify/polaris";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { authenticate } from "../shopify.server";
 import { ActivityService } from "../services/activity.service";
 import { RevertService } from "../services/revert.service";
@@ -23,18 +25,22 @@ import { Backup } from "../models/Backup";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { session } = await authenticate.admin(request);
 
-    // Parse URL params for filters
+    // Parse URL params for filters and pagination
     const url = new URL(request.url);
     const category = url.searchParams.get('category') || 'All';
     const status = url.searchParams.get('status')?.split(',').filter(Boolean) || [];
     const search = url.searchParams.get('search') || '';
+    const page = parseInt(url.searchParams.get('page') || '1');
+    const limit = parseInt(url.searchParams.get('limit') || '50');
 
-    // Get logs with server-side filtering
-    const logs = await ActivityService.getLogs(session.shop, 50, {
+    // Get logs with server-side filtering and pagination
+    const result = await ActivityService.getLogs(session.shop, limit, {
         category: category !== 'All' ? category : undefined,
         status: status.length > 0 ? status : undefined,
         search: search || undefined,
+        page,
     });
+    const logs = result.logs;
 
     // Check for backups
     const logsWithBackup = await Promise.all(logs.map(async (log: any) => {
@@ -47,7 +53,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }));
 
     return json({
-        logs: logsWithBackup
+        logs: logsWithBackup,
+        pagination: {
+            currentPage: page,
+            totalPages: result.totalPages,
+            totalLogs: result.totalCount,
+            limit,
+        }
     });
 };
 
@@ -80,10 +92,18 @@ const ACTION_CATEGORIES = {
 };
 
 export default function Activity() {
-    const { logs } = useLoaderData<typeof loader>();
+    const { logs, pagination } = useLoaderData<typeof loader>();
     const submit = useSubmit();
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
+    const revalidator = useRevalidator();
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            revalidator.revalidate();
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [revalidator]);
 
     const resourceName = {
         singular: 'log',
@@ -94,6 +114,7 @@ export default function Activity() {
     const currentCategory = searchParams.get('category') || 'All';
     const currentSearch = searchParams.get('search') || '';
     const currentStatus = searchParams.get('status')?.split(',').filter(Boolean) || [];
+    const currentPage = pagination?.currentPage || 1;
 
     // Find selected tab index from category
     const categoryKeys = Object.keys(ACTION_CATEGORIES);
@@ -104,6 +125,7 @@ export default function Activity() {
         category?: string;
         search?: string;
         status?: string[];
+        page?: number;
     }) => {
         const params = new URLSearchParams(searchParams);
 
@@ -128,6 +150,14 @@ export default function Activity() {
                 params.set('status', updates.status.join(','));
             } else {
                 params.delete('status');
+            }
+        }
+
+        if (updates.page !== undefined) {
+            if (updates.page > 1) {
+                params.set('page', updates.page.toString());
+            } else {
+                params.delete('page');
             }
         }
 
@@ -203,40 +233,63 @@ export default function Activity() {
 
     // No client-side filtering - logs already filtered by backend
     const rowMarkup = logs.map(
-        ({ id, resourceType, action, detail, status, timestamp, hasBackup, jobId }: any, index: number) => (
-            <IndexTable.Row
-                id={id}
-                key={id}
-                position={index}
-            >
-                <IndexTable.Cell>
-                    <Text variant="bodyMd" fontWeight="bold" as="span">
-                        {action}
-                    </Text>
-                </IndexTable.Cell>
-                <IndexTable.Cell>{resourceType}</IndexTable.Cell>
-                <IndexTable.Cell>
-                    <Tooltip content={detail}>
-                        <Text as="span" truncate>
-                            {detail.length > 50 ? detail.substring(0, 50) + "..." : detail}
+        ({ id, resourceType, action, details, status, timestamp, hasBackup, jobId }: any, index: number) => {
+            // Get the latest detail message
+            const latestDetail = details && details.length > 0
+                ? details[details.length - 1].message
+                : 'No details';
+
+            // Create full history for tooltip
+            const fullHistory = details && details.length > 0
+                ? (
+                    <List>
+                        {details.map((detail: any, index: number) => (
+                            <List.Item key={index}>
+                                <Text variant="bodyMd" as="span">
+                                    [{new Date(detail.timestamp).toLocaleString()}] {detail.message}
+                                </Text>
+                            </List.Item>
+                        ))}
+                    </List>
+                )
+                : 'No details';
+
+            return (
+                <IndexTable.Row
+                    id={id}
+                    key={id}
+                    position={index}
+                >
+                    <IndexTable.Cell>
+                        <Text variant="bodyMd" fontWeight="bold" as="span">
+                            {action}
                         </Text>
-                    </Tooltip>
-                </IndexTable.Cell>
-                <IndexTable.Cell>
-                    <Badge tone={status === 'Success' ? 'success' : status === 'Failed' ? 'critical' : 'info'}>
-                        {status}
-                    </Badge>
-                </IndexTable.Cell>
-                <IndexTable.Cell>
-                    {new Date(timestamp).toLocaleString()}
-                </IndexTable.Cell>
-                <IndexTable.Cell>
-                    {hasBackup && (
-                        <Button size="micro" onClick={() => handleRevert(jobId)}>Revert</Button>
-                    )}
-                </IndexTable.Cell>
-            </IndexTable.Row>
-        ),
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>{resourceType}</IndexTable.Cell>
+                    <IndexTable.Cell>
+                        <Tooltip content={fullHistory}>
+                            <Text as="span" truncate>
+                                {latestDetail.length > 50 ? latestDetail.substring(0, 50) + "..." : latestDetail}
+                                {details && details.length > 1 && ` (+${details.length - 1} more)`}
+                            </Text>
+                        </Tooltip>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                        <Badge tone={status === 'Success' ? 'success' : status === 'Failed' ? 'critical' : 'info'}>
+                            {status}
+                        </Badge>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                        {new Date(timestamp).toLocaleString()}
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                        {hasBackup && (
+                            <Button size="micro" onClick={() => handleRevert(jobId)}>Revert</Button>
+                        )}
+                    </IndexTable.Cell>
+                </IndexTable.Row>
+            );
+        }
     );
 
     const { mode, setMode } = useSetIndexFiltersMode();
@@ -283,6 +336,17 @@ export default function Activity() {
                         >
                             {rowMarkup}
                         </IndexTable>
+                        {pagination && pagination.totalPages > 1 && (
+                            <div style={{ padding: '16px', display: 'flex', justifyContent: 'center' }}>
+                                <Pagination
+                                    hasPrevious={currentPage > 1}
+                                    onPrevious={() => updateFilters({ page: currentPage - 1 })}
+                                    hasNext={currentPage < pagination.totalPages}
+                                    onNext={() => updateFilters({ page: currentPage + 1 })}
+                                    label={`Page ${currentPage} of ${pagination.totalPages} (${pagination.totalLogs} total logs)`}
+                                />
+                            </div>
+                        )}
                     </Card>
                 </Layout.Section>
             </Layout>

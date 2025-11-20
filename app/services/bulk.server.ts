@@ -99,6 +99,7 @@ export async function dryRunTagOperation(
 
 export async function processBulkJob(job: any) {
   const { shop, resourceType, findTag, replaceTag, operation, step = 'init', operationId, mutationOpId } = job.data;
+  const currentJobId = job.data.jobId;
   console.log(`Processing bulk job for ${shop}: ${operation} ${findTag} -> ${replaceTag} [Step: ${step}]`);
 
   try {
@@ -117,7 +118,7 @@ export async function processBulkJob(job: any) {
             }`;
 
       const bulkOp = await BulkOperationService.runBulkQuery(shop, query);
-      await bulkQueue.add(job.name, { ...job.data, step: 'polling_query', operationId: bulkOp.id }, { delay: 5000 });
+      await bulkQueue.add(job.name, { ...job.data, step: 'polling_query', operationId: bulkOp.id, jobId: currentJobId }, { delay: 5000 });
 
       await ActivityService.createLog({
         shop,
@@ -125,7 +126,7 @@ export async function processBulkJob(job: any) {
         resourceId: "Bulk",
         action: "Bulk Operation",
         detail: `Started Bulk Query: ${bulkOp.id}`,
-        jobId: job.id,
+        jobId: currentJobId,
         status: "Pending",
       });
       return;
@@ -148,12 +149,12 @@ export async function processBulkJob(job: any) {
             resourceId: "Bulk",
             action: "Bulk Operation",
             detail: `No items found with tag '${findTag}'`,
-            jobId: job.id,
+            jobId: currentJobId,
             status: "Success",
           });
           return;
         }
-        await bulkQueue.add(job.name, { ...job.data, step: 'processing', resultUrl: bulkOp.url }, { delay: 0 });
+        await bulkQueue.add(job.name, { ...job.data, step: 'processing', resultUrl: bulkOp.url, jobId: currentJobId }, { delay: 0 });
         return;
       }
 
@@ -172,7 +173,7 @@ export async function processBulkJob(job: any) {
           resourceId: "Bulk",
           action: "Bulk Operation",
           detail: `No results available for tag operation '${findTag}'`,
-          jobId: job.id,
+          jobId: currentJobId,
           status: "Failed",
         });
         return;
@@ -242,7 +243,7 @@ export async function processBulkJob(job: any) {
           resourceId: "Bulk",
           action: "Bulk Operation",
           detail: `No updates needed for ${lines.length} items.`,
-          jobId: job.id,
+          jobId: currentJobId,
           status: "Success",
         });
         return;
@@ -251,7 +252,7 @@ export async function processBulkJob(job: any) {
       // Save Backup
       await Backup.create({
         shop,
-        jobId: job.id, // Use BullMQ Job ID as reference
+        jobId: currentJobId, // Use BullMQ Job ID as reference
         resourceType,
         items: backupItems
       });
@@ -281,7 +282,7 @@ export async function processBulkJob(job: any) {
 
       const mutationOp = await BulkOperationService.runBulkMutation(shop, mutationQuery, stagedUpload.parameters.find((p: any) => p.name === 'key').value);
 
-      await bulkQueue.add(job.name, { ...job.data, step: 'polling_mutation', mutationOpId: mutationOp.id, count: mutations.length }, { delay: 5000 });
+      await bulkQueue.add(job.name, { ...job.data, step: 'polling_mutation', mutationOpId: mutationOp.id, count: mutations.length, jobId: currentJobId }, { delay: 5000 });
       return;
     }
 
@@ -306,7 +307,7 @@ export async function processBulkJob(job: any) {
           resourceId: "Bulk",
           action: "Bulk Operation",
           detail: `Successfully updated ${count} items.`,
-          jobId: job.id,
+          jobId: currentJobId,
           status: "Success",
         });
         return;
@@ -323,7 +324,7 @@ export async function processBulkJob(job: any) {
       resourceId: "Bulk",
       action: "Bulk Operation",
       detail: `Failed: ${(error as Error).message}`,
-      jobId: job.id,
+      jobId: currentJobId,
       status: "Failed",
     });
     throw error;

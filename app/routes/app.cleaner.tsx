@@ -25,6 +25,7 @@ import { CleanerService } from "../services/cleaner.service";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { UsageService } from "../services/usage.service";
 import { getPlan } from "~/utils/get-plan";
+import { generateJobId } from "~/utils/id-generator";
 
 export const loader = async ({ request }: { request: Request }) => {
   const { session } = await authenticate.admin(request);
@@ -144,15 +145,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Dispatch job to BullMQ for background processing
+    const jobId = generateJobId();
     const job = await cleanerQueue.add("clean-tags", {
       shop: session.shop,
       tagsToRemove,
+      jobId,
     });
 
     return json({
       status: "queued",
       count: tagsToRemove.length,
-      jobId: job.id,
+      jobId,
       message: `Tag cleanup job queued successfully. Check Activity Logs for completion status.`
     });
   }

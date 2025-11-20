@@ -1,6 +1,7 @@
 import { Backup } from "../models/Backup";
-import { bulkQueue } from "../queues";
 import { ActivityService } from "./activity.service";
+import { bulkQueue } from "../queue.server";
+import { generateJobId } from "~/utils/id-generator";
 import { BulkOperationService } from "./bulk_operation.service";
 
 export class RevertService {
@@ -26,7 +27,7 @@ export class RevertService {
         // No, 'processing' expects a resultUrl from a Query.
         // Here we already have the data (backup.items).
         // We can skip to "Mutation" phase.
-        // But `bulk.server.ts` expects `step='processing'` to parse JSONL.
+        // But `bulk.server.ts` expects `step = 'processing'` to parse JSONL.
 
         // Let's create a specific "revert" job handler in `bulk.server.ts`?
         // Or just implement the logic here and use `bulkQueue` to poll.
@@ -59,10 +60,8 @@ export class RevertService {
         const mutationOp = await BulkOperationService.runBulkMutation(shop, mutationQuery, stagedUpload.parameters.find((p: any) => p.name === 'key').value);
 
         // 4. Queue polling job
-        // We can reuse `bulkQueue` with a special step 'polling_revert' or just 'polling_mutation' if we match the data structure.
-        // `processBulkJob` expects `mutationOpId` and `count`.
-        // It logs "Successfully updated...".
-        // We can reuse `step='polling_mutation'`.
+        // Generate a new random jobId for the revert operation
+        const revertJobId = generateJobId();
 
         await bulkQueue.add("revert-job", {
             shop,
@@ -70,14 +69,14 @@ export class RevertService {
             step: 'polling_mutation',
             mutationOpId: mutationOp.id,
             count: mutations.length,
-            // Add extra context if needed
+            jobId: revertJobId,
         }, { delay: 5000 });
 
         await ActivityService.createLog({
             shop,
             resourceType,
             resourceId: "Bulk",
-            jobId: `revert-${jobId}`,
+            jobId: revertJobId,
             action: "Revert",
             detail: `Started revert for job ${jobId}. Operation: ${mutationOp.id}`,
             status: "Pending",

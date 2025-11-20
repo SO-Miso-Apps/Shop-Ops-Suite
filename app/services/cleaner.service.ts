@@ -14,6 +14,7 @@ export class CleanerService {
 
     static async processCleanerJob(job: any) {
         const { shop, tagsToRemove, step = 'init', operationId, mutationOpId, resourceType = 'products' } = job.data;
+        const currentJobId = job.data.jobId;
         console.log(`Processing cleaner job for ${shop}: removing ${tagsToRemove} [Step: ${step}]`);
 
         try {
@@ -47,7 +48,7 @@ export class CleanerService {
                 }`;
 
                 const bulkOp = await BulkOperationService.runBulkQuery(shop, query);
-                await cleanerQueue.add(job.name, { ...job.data, step: 'polling_query', operationId: bulkOp.id, resourceType: currentResourceType }, { delay: 5000 });
+                await cleanerQueue.add(job.name, { ...job.data, step: 'polling_query', operationId: bulkOp.id, resourceType: currentResourceType, jobId: currentJobId }, { delay: 5000 });
 
                 await ActivityService.createLog({
                     shop,
@@ -55,6 +56,7 @@ export class CleanerService {
                     resourceId: "Bulk",
                     action: "Tag Cleanup",
                     detail: `Started Cleanup Query for ${currentResourceType}: ${bulkOp.id}`,
+                    jobId: currentJobId,
                     status: "Pending",
                 });
                 return;
@@ -73,7 +75,7 @@ export class CleanerService {
                     if (parseInt(bulkOp.objectCount) === 0) {
                         // No items found. If we are doing products, maybe move to customers?
                         if (currentResourceType === 'products') {
-                            await cleanerQueue.add(job.name, { ...job.data, step: 'init', resourceType: 'customers' }, { delay: 0 });
+                            await cleanerQueue.add(job.name, { ...job.data, step: 'init', resourceType: 'customers', jobId: currentJobId }, { delay: 0 });
                             return;
                         }
                         await ActivityService.createLog({
@@ -82,11 +84,12 @@ export class CleanerService {
                             resourceId: "Bulk",
                             action: "Tag Cleanup",
                             detail: `No items found to clean.`,
+                            jobId: currentJobId,
                             status: "Success",
                         });
                         return;
                     }
-                    await cleanerQueue.add(job.name, { ...job.data, step: 'processing', resultUrl: bulkOp.url }, { delay: 0 });
+                    await cleanerQueue.add(job.name, { ...job.data, step: 'processing', resultUrl: bulkOp.url, jobId: currentJobId }, { delay: 0 });
                     return;
                 }
                 throw new Error(`Bulk Query Failed: ${bulkOp.status}`);
@@ -121,7 +124,7 @@ export class CleanerService {
 
                 if (mutations.length === 0) {
                     if (currentResourceType === 'products') {
-                        await cleanerQueue.add(job.name, { ...job.data, step: 'init', resourceType: 'customers' }, { delay: 0 });
+                        await cleanerQueue.add(job.name, { ...job.data, step: 'init', resourceType: 'customers', jobId: currentJobId }, { delay: 0 });
                         return;
                     }
                     return;
@@ -130,7 +133,7 @@ export class CleanerService {
                 // Save Backup
                 await Backup.create({
                     shop,
-                    jobId: job.id,
+                    jobId: currentJobId,
                     resourceType: currentResourceType,
                     items: backupItems
                 });
@@ -151,7 +154,7 @@ export class CleanerService {
 
                 const mutationOp = await BulkOperationService.runBulkMutation(shop, mutationQuery, stagedUpload.parameters.find((p: any) => p.name === 'key').value);
 
-                await cleanerQueue.add(job.name, { ...job.data, step: 'polling_mutation', mutationOpId: mutationOp.id, count: mutations.length }, { delay: 5000 });
+                await cleanerQueue.add(job.name, { ...job.data, step: 'polling_mutation', mutationOpId: mutationOp.id, count: mutations.length, jobId: currentJobId }, { delay: 5000 });
                 return;
             }
 
@@ -175,12 +178,13 @@ export class CleanerService {
                         resourceId: "Bulk",
                         action: "Tag Cleanup",
                         detail: `Cleaned ${count} ${currentResourceType}.`,
+                        jobId: currentJobId,
                         status: "Success",
                     });
 
                     // If we just finished products, start customers
                     if (currentResourceType === 'products') {
-                        await cleanerQueue.add(job.name, { ...job.data, step: 'init', resourceType: 'customers' }, { delay: 0 });
+                        await cleanerQueue.add(job.name, { ...job.data, step: 'init', resourceType: 'customers', jobId: currentJobId }, { delay: 0 });
                     }
                     return;
                 }
@@ -195,6 +199,7 @@ export class CleanerService {
                 resourceId: "Bulk",
                 action: "Tag Cleanup",
                 detail: `Failed: ${(error as Error).message}`,
+                jobId: currentJobId,
                 status: "Failed",
             });
             throw error;

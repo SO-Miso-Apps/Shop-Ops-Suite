@@ -15,6 +15,7 @@ const ACTION_TO_CATEGORY: Record<string, string> = {
     "Webhook Received": "System",
     "Job Queued": "System",
     "Job Completed": "System",
+    "Revert": "Bulk Operations",
 };
 
 export class ActivityService {
@@ -47,6 +48,7 @@ export class ActivityService {
             category?: string;
             status?: string[];
             search?: string;
+            page?: number;
         }
     ) {
         const query: any = { shop };
@@ -61,33 +63,58 @@ export class ActivityService {
             query.status = { $in: filters.status };
         }
 
-        // Search filter (action or detail)
+        // Search filter (action or details)
         if (filters?.search) {
             query.$or = [
                 { action: { $regex: filters.search, $options: 'i' } },
-                { detail: { $regex: filters.search, $options: 'i' } },
+                { 'details.message': { $regex: filters.search, $options: 'i' } },
             ];
         }
 
+        // Pagination
+        const page = filters?.page || 1;
+        const skip = (page - 1) * limit;
+
+        // Get total count for pagination
+        const totalCount = await ActivityLog.countDocuments(query);
+        const totalPages = Math.ceil(totalCount / limit);
+
         const logs = await ActivityLog.find(query)
             .sort({ timestamp: -1 })
+            .skip(skip)
             .limit(limit);
 
-        return logs.map((log: any) => ({
-            id: log._id.toString(),
-            resourceType: log.resourceType,
-            resourceId: log.resourceId,
-            action: log.action,
-            category: log.category || this.getCategoryFromAction(log.action),
-            detail: log.detail,
-            status: log.status,
-            timestamp: log.timestamp,
-            jobId: log.jobId,
-        }));
+        const mappedLogs = logs.map((log: any) => {
+            // Backward compatibility: convert old string detail to array format
+            let details = log.details;
+            if (typeof log.detail === 'string') {
+                details = [{ message: log.detail, timestamp: log.timestamp }];
+            }
+
+            return {
+                id: log._id.toString(),
+                resourceType: log.resourceType,
+                resourceId: log.resourceId,
+                action: log.action,
+                category: log.category || this.getCategoryFromAction(log.action),
+                details: details || [],
+                status: log.status,
+                timestamp: log.timestamp,
+                jobId: log.jobId,
+            };
+        });
+
+        return {
+            logs: mappedLogs,
+            totalCount,
+            totalPages,
+            currentPage: page,
+        };
     }
 
     /**
-     * Create activity log with automatic category detection
+     * Create or update activity log with automatic category detection
+     * If jobId exists, updates the existing log; otherwise creates a new one
      */
     static async createLog(data: {
         shop: string;
@@ -99,10 +126,37 @@ export class ActivityService {
         jobId?: string;
     }) {
         const category = this.getCategoryFromAction(data.action);
+        const newDetail = {
+            message: data.detail,
+            timestamp: new Date(),
+        };
 
+        // If jobId is provided, try to update existing log
+        if (data.jobId) {
+            const existingLog = await ActivityLog.findOne({
+                shop: data.shop,
+                jobId: data.jobId
+            });
+
+            if (existingLog) {
+                // Update existing log: push new detail and update status
+                existingLog.details.push(newDetail);
+                existingLog.status = data.status || existingLog.status;
+                existingLog.timestamp = new Date();
+                await existingLog.save();
+                return existingLog;
+            }
+        }
+
+        // Create new log if no jobId or no existing log found
         return await ActivityLog.create({
-            ...data,
+            shop: data.shop,
+            resourceType: data.resourceType,
+            resourceId: data.resourceId,
+            action: data.action,
             category,
+            details: [newDetail],
+            jobId: data.jobId,
             status: data.status || 'Pending',
         });
     }

@@ -12,11 +12,16 @@ const activityLogSchema = new mongoose.Schema({
         default: 'System',
         index: true,
     },
-    detail: { type: String, required: true },
+    details: [{
+        message: { type: String, required: true },
+        timestamp: { type: Date, default: Date.now }
+    }],
     status: { type: String, enum: ['Success', 'Failed', 'Pending'], default: 'Pending' },
     timestamp: { type: Date, default: Date.now },
 });
 
 activityLogSchema.index({ shop: 1, timestamp: -1 });
 activityLogSchema.index({ shop: 1, category: 1, timestamp: -1 });
+activityLogSchema.index({ shop: 1, jobId: 1 });
+
 export const ActivityLog = mongoose.models.ActivityLog || mongoose.model("ActivityLog", activityLogSchema);

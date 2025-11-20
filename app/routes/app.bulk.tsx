@@ -23,6 +23,7 @@ import { bulkQueue } from "../queue.server";
 import { dryRunTagOperation } from "../services/bulk.server";
 import { UsageService } from "../services/usage.service";
 import { getPlan } from "~/utils/get-plan";
+import { generateJobId } from "~/utils/id-generator";
 
 export const loader = async ({ request }: { request: Request }) => {
     const { session } = await authenticate.admin(request);
@@ -91,15 +92,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
 
         // Push to Bulk Queue
+        const jobId = generateJobId();
         await bulkQueue.add("bulk-tag-update", {
             shop: session.shop,
             resourceType,
             findTag,
             replaceTag,
             operation,
+            jobId,
         });
 
-        return json({ status: "queued" });
+        return json({ status: "queued", jobId });
     }
 
     return json({});
