@@ -10,19 +10,36 @@ interface WebhookPayload {
 
 export class TaggerService {
     static async getRules(shop: string) {
-        return await TaggingRule.find({ shop });
+        return await TaggingRule.find({ shop }).sort({ createdAt: -1 });
+    }
+
+    static async getLibraryRules() {
+        const shopAdmin = process.env.SHOP_ADMIN;
+        if (!shopAdmin) return [];
+        return await TaggingRule.find({ shop: shopAdmin, isEnabled: true });
     }
 
     static async countActiveRules(shop: string) {
         return await TaggingRule.countDocuments({ shop, isEnabled: true });
     }
 
-    static async saveRule(shop: string, ruleId: string, isEnabled: boolean, params: any) {
-        return await TaggingRule.findOneAndUpdate(
-            { shop, ruleId },
-            { isEnabled, params, updatedAt: new Date() },
-            { upsert: true, new: true }
-        );
+    static async saveRule(shop: string, data: any) {
+        if (data._id) {
+            return await TaggingRule.findOneAndUpdate(
+                { shop, _id: data._id },
+                { ...data, updatedAt: new Date() },
+                { new: true }
+            );
+        } else {
+            return await TaggingRule.create({
+                shop,
+                ...data
+            });
+        }
+    }
+
+    static async deleteRule(shop: string, id: string) {
+        return await TaggingRule.findOneAndDelete({ shop, _id: id });
     }
 
     static async processWebhookJob(job: any) {
@@ -35,14 +52,11 @@ export class TaggerService {
                 throw new Error(`Could not get admin client for ${shop}`);
             }
 
-            // 1. Xử lý Tagging Rules (Smart Tagger - Logic cũ vẫn giữ nguyên)
-            const taggingRules = await TaggingRule.find({ shop, isEnabled: true });
-            if (taggingRules.length > 0) {
-                if (topic === "ORDERS_CREATE" || topic === "ORDERS_UPDATED") {
-                    await TaggerService.evaluateOrderRules(admin, shop, payload, taggingRules);
-                } else if (topic === "CUSTOMERS_UPDATE") {
-                    await TaggerService.evaluateCustomerRules(admin, shop, payload, taggingRules);
-                }
+            // 1. Xử lý Tagging Rules (Smart Tagger - Dynamic Logic)
+            if (topic === "ORDERS_CREATE" || topic === "ORDERS_UPDATED") {
+                await TaggerService.evaluateTaggingRules(admin, shop, payload, "orders");
+            } else if (topic === "CUSTOMERS_UPDATE") { // Note: CUSTOMERS_CREATE usually doesn't have much data yet, but we can support it if needed
+                await TaggerService.evaluateTaggingRules(admin, shop, payload, "customers");
             }
 
             // 2. Xử lý Metafield Rules (NEW Logic)
@@ -74,158 +88,94 @@ export class TaggerService {
         }
     }
 
-    private static async evaluateOrderRules(admin: any, shop: string, order: any, rules: any[]) {
-        const tagsToAdd: string[] = [];
+    private static async evaluateTaggingRules(
+        admin: any,
+        shop: string,
+        resource: any,
+        resourceType: "orders" | "customers"
+    ) {
+        const rules = await TaggingRule.find({ shop, resourceType, isEnabled: true });
+        if (rules.length === 0) return;
+
+        const tagsToAdd = new Set<string>();
+        const tagsToRemove = new Set<string>();
         const logs: any[] = [];
 
+        // 1. Calculate Tags to Add vs Remove
         for (const rule of rules) {
-            let match = false;
-            let reason = "";
+            const isMatch = TaggerService.checkConditions(resource, rule.conditions, rule.conditionLogic || 'AND');
 
-            switch (rule.ruleId) {
-                case "whale_order":
-                    const amount = parseFloat(rule.params.amount || "0");
-                    if (parseFloat(order.total_price) > amount) {
-                        match = true;
-                        reason = `Order value ${order.total_price} > ${amount}`;
-                    }
-                    break;
-
-                case "international_order":
-                    const shopQuery = `#graphql
-              query {
-                shop {
-                  billingAddress {
-                    countryCode
-                  }
-                }
-              }
-            `;
-                    const shopRes = await admin.graphql(shopQuery);
-                    const shopData = await shopRes.json();
-                    const shopCountry = shopData.data.shop.billingAddress.countryCode;
-
-                    if (order.shipping_address && order.shipping_address.country_code !== shopCountry) {
-                        match = true;
-                        reason = `Shipping country ${order.shipping_address.country_code} != Shop country ${shopCountry}`;
-                    }
-                    break;
-
-                case "returning_customer":
-                    if (order.customer && order.customer.orders_count > 1) {
-                        match = true;
-                        reason = `Customer order count ${order.customer.orders_count} > 1`;
-                    }
-                    break;
-
-                case "specific_product":
-                    if (rule.params.collectionId) {
-                        // Placeholder for collection check
-                    }
-                    break;
-            }
-
-            if (match) {
-                tagsToAdd.push(rule.ruleId === "whale_order" ? "Whale" :
-                    rule.ruleId === "international_order" ? "International" :
-                        rule.ruleId === "returning_customer" ? "Returning" : "Tagged");
-
+            if (isMatch) {
+                rule.tags.forEach((t: string) => tagsToAdd.add(t));
                 logs.push({
                     shop,
-                    resourceType: 'Order',
-                    resourceId: order.id.toString(),
+                    resourceType: resourceType === 'orders' ? 'Order' : 'Customer',
+                    resourceId: resource.id.toString(),
                     action: 'Add Tag',
-                    detail: `Added tag for rule '${rule.ruleId}': ${reason}`,
+                    detail: `Rule '${rule.name}' matched. Tags: ${rule.tags.join(', ')}`,
                     status: 'Success',
                 });
+            } else {
+                // If rule doesn't match, we should remove these tags
+                // UNLESS they are added by another matching rule (handled later by Set difference)
+                rule.tags.forEach((t: string) => tagsToRemove.add(t));
             }
         }
 
-        if (tagsToAdd.length > 0) {
-            const tagsAddMutation = `#graphql
-          mutation tagsAdd($id: ID!, $tags: [String!]!) {
-            tagsAdd(id: $id, tags: $tags) {
-              node {
-                id
-              }
-              userErrors {
-                message
-              }
-            }
-          }
-        `;
+        // 2. Resolve Conflicts: If a tag is in both Add and Remove, Add wins.
+        for (const tag of tagsToAdd) {
+            tagsToRemove.delete(tag);
+        }
 
-            const orderGid = `gid://shopify/Order/${order.id}`;
-            await admin.graphql(tagsAddMutation, {
-                variables: {
-                    id: orderGid,
-                    tags: tagsToAdd,
-                },
+        // 3. Execute GraphQL Mutations
+        const resourceGid = `gid://shopify/${resourceType === 'orders' ? 'Order' : 'Customer'}/${resource.id}`;
+
+        if (tagsToAdd.size > 0) {
+            await TaggerService.addTags(admin, resourceGid, Array.from(tagsToAdd));
+        }
+
+        if (tagsToRemove.size > 0) {
+            await TaggerService.removeTags(admin, resourceGid, Array.from(tagsToRemove));
+            logs.push({
+                shop,
+                resourceType: resourceType === 'orders' ? 'Order' : 'Customer',
+                resourceId: resource.id.toString(),
+                action: 'Remove Tag',
+                detail: `Tags removed: ${Array.from(tagsToRemove).join(', ')}`,
+                status: 'Success',
             });
+        }
 
-            for (const log of logs) {
-                await ActivityService.createLog(log);
-            }
+        // 4. Save Logs
+        for (const log of logs) {
+            await ActivityService.createLog(log);
         }
     }
 
-    private static async evaluateCustomerRules(admin: any, shop: string, customer: any, rules: any[]) {
-        const tagsToAdd: string[] = [];
-        const logs: any[] = [];
-
-        for (const rule of rules) {
-            let match = false;
-            let reason = "";
-
-            switch (rule.ruleId) {
-                case "vip_customer":
-                    const amount = parseFloat(rule.params.amount || "0");
-                    if (parseFloat(customer.total_spent) > amount) {
-                        match = true;
-                        reason = `Total spend ${customer.total_spent} > ${amount}`;
-                    }
-                    break;
-            }
-
-            if (match) {
-                tagsToAdd.push("VIP");
-                logs.push({
-                    shop,
-                    resourceType: 'Customer',
-                    resourceId: customer.id.toString(),
-                    action: 'Add Tag',
-                    detail: `Added tag for rule '${rule.ruleId}': ${reason}`,
-                    status: 'Success',
-                });
-            }
-        }
-
-        if (tagsToAdd.length > 0) {
-            const tagsAddMutation = `#graphql
+    private static async addTags(admin: any, id: string, tags: string[]) {
+        const tagsAddMutation = `#graphql
           mutation tagsAdd($id: ID!, $tags: [String!]!) {
             tagsAdd(id: $id, tags: $tags) {
-              node {
-                id
-              }
               userErrors {
                 message
               }
             }
           }
         `;
+        await admin.graphql(tagsAddMutation, { variables: { id, tags } });
+    }
 
-            const customerGid = `gid://shopify/Customer/${customer.id}`;
-            await admin.graphql(tagsAddMutation, {
-                variables: {
-                    id: customerGid,
-                    tags: tagsToAdd,
-                },
-            });
-
-            for (const log of logs) {
-                await ActivityService.createLog(log);
+    private static async removeTags(admin: any, id: string, tags: string[]) {
+        const tagsRemoveMutation = `#graphql
+          mutation tagsRemove($id: ID!, $tags: [String!]!) {
+            tagsRemove(id: $id, tags: $tags) {
+              userErrors {
+                message
+              }
             }
-        }
+          }
+        `;
+        await admin.graphql(tagsRemoveMutation, { variables: { id, tags } });
     }
 
     public static async evaluateMetafieldRules(
@@ -249,7 +199,7 @@ export class TaggerService {
         const mutationsToRun: any[] = [];
 
         for (const rule of rules) {
-            const isMatch = TaggerService.checkConditions(resource, rule.conditions);
+            const isMatch = TaggerService.checkConditions(resource, rule.conditions, 'AND'); // Metafield rules default to AND for now
 
             if (isMatch) {
                 const ownerId = resourceType === "products"
@@ -326,12 +276,12 @@ export class TaggerService {
         }
     }
 
-    public static checkConditions(resource: any, conditions: any[]): boolean {
+    public static checkConditions(resource: any, conditions: any[], logic: 'AND' | 'OR' = 'AND'): boolean {
         if (!conditions || conditions.length === 0) {
             return true;
         }
 
-        return conditions.every(condition => {
+        const check = (condition: any) => {
             const resourceValue = TaggerService.getNestedValue(resource, condition.field);
             const targetValue = condition.value;
 
@@ -354,16 +304,39 @@ export class TaggerService {
                 case 'starts_with':
                     result = String(resourceValue).toLowerCase().startsWith(String(targetValue).toLowerCase());
                     break;
+                case 'ends_with':
+                    result = String(resourceValue).toLowerCase().endsWith(String(targetValue).toLowerCase());
+                    break;
                 case 'greater_than':
                     result = isNumberCompare && numResource > numTarget;
                     break;
                 case 'less_than':
                     result = isNumberCompare && numResource < numTarget;
                     break;
+                case 'in':
+                    const options = String(targetValue).split(',').map(s => s.trim().toLowerCase());
+                    result = options.includes(String(resourceValue).toLowerCase());
+                    break;
+                case 'not_in':
+                    const notOptions = String(targetValue).split(',').map(s => s.trim().toLowerCase());
+                    result = !notOptions.includes(String(resourceValue).toLowerCase());
+                    break;
+                case 'is_empty':
+                    result = !resourceValue || String(resourceValue).trim() === "";
+                    break;
+                case 'is_not_empty':
+                    result = !!resourceValue && String(resourceValue).trim() !== "";
+                    break;
             }
 
             return result;
-        });
+        };
+
+        if (logic === 'OR') {
+            return conditions.some(check);
+        } else {
+            return conditions.every(check);
+        }
     }
 
     private static getNestedValue(obj: any, path: string) {

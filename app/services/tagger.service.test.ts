@@ -1,0 +1,191 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { TaggerService } from './tagger.service';
+import { TaggingRule } from '../models/TaggingRule';
+import { ActivityService } from './activity.service';
+
+// Mock Mongoose Model
+vi.mock('../models/TaggingRule', () => ({
+  TaggingRule: {
+    find: vi.fn(),
+    countDocuments: vi.fn(),
+    findOneAndUpdate: vi.fn(),
+    create: vi.fn(),
+    findOneAndDelete: vi.fn(),
+  }
+}));
+
+// Mock ActivityService
+vi.mock('./activity.service', () => ({
+  ActivityService: {
+    createLog: vi.fn(),
+  }
+}));
+
+describe('TaggerService', () => {
+  const mockAdmin = {
+    graphql: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('checkConditions', () => {
+    it('should return true if conditions match', () => {
+      const resource = { total_price: "100", customer: { orders_count: 2 } };
+      const conditions = [
+        { field: "total_price", operator: "greater_than", value: "50" },
+        { field: "customer.orders_count", operator: "equals", value: "2" }
+      ];
+      expect(TaggerService.checkConditions(resource, conditions)).toBe(true);
+    });
+
+    it('should return false if any condition fails', () => {
+      const resource = { total_price: "100" };
+      const conditions = [
+        { field: "total_price", operator: "greater_than", value: "150" }
+      ];
+      expect(TaggerService.checkConditions(resource, conditions)).toBe(false);
+    });
+  });
+
+  describe('evaluateTaggingRules', () => {
+    it('should add tags when rule matches', async () => {
+      const rules = [{
+        name: "Test Rule",
+        conditions: [{ field: "total_price", operator: "greater_than", value: "50" }],
+        tags: ["VIP"],
+        isEnabled: true
+      }];
+      (TaggingRule.find as any).mockResolvedValue(rules);
+
+      const order = { id: 123, total_price: "100" };
+
+      // Access private method via any cast or if it was public. 
+      // Since it's private, we might need to test via processWebhookJob or make it public for testing.
+      // For this test, let's assume we can access it or we change it to public temporarily/permanently.
+      // Or better, let's test via processWebhookJob which calls it.
+      // But processWebhookJob needs more setup.
+      // Let's just call the private method using (TaggerService as any).
+      await (TaggerService as any).evaluateTaggingRules(mockAdmin, "test-shop", order, "orders");
+
+      expect(mockAdmin.graphql).toHaveBeenCalledWith(expect.stringContaining("tagsAdd"), expect.objectContaining({
+        variables: { id: "gid://shopify/Order/123", tags: ["VIP"] }
+      }));
+    });
+
+    it('should remove tags when rule does NOT match', async () => {
+      const rules = [{
+        name: "Test Rule",
+        conditions: [{ field: "total_price", operator: "greater_than", value: "150" }],
+        tags: ["VIP"],
+        isEnabled: true
+      }];
+      (TaggingRule.find as any).mockResolvedValue(rules);
+
+      const order = { id: 123, total_price: "100" };
+
+      await (TaggerService as any).evaluateTaggingRules(mockAdmin, "test-shop", order, "orders");
+
+      expect(mockAdmin.graphql).toHaveBeenCalledWith(expect.stringContaining("tagsRemove"), expect.objectContaining({
+        variables: { id: "gid://shopify/Order/123", tags: ["VIP"] }
+      }));
+    });
+
+    it('should handle conflicts: Add wins over Remove', async () => {
+      const rules = [
+        {
+          name: "Rule A (Match)",
+          conditions: [{ field: "total_price", operator: "greater_than", value: "50" }],
+          tags: ["VIP"],
+          isEnabled: true
+        },
+        {
+          name: "Rule B (No Match)",
+          conditions: [{ field: "total_price", operator: "greater_than", value: "150" }],
+          tags: ["VIP"], // Same tag
+          isEnabled: true
+        }
+      ];
+      (TaggingRule.find as any).mockResolvedValue(rules);
+
+      const order = { id: 123, total_price: "100" };
+
+      await (TaggerService as any).evaluateTaggingRules(mockAdmin, "test-shop", order, "orders");
+
+      // Should ADD "VIP" (because Rule A matches) and NOT remove it (even though Rule B failed)
+      expect(mockAdmin.graphql).toHaveBeenCalledWith(expect.stringContaining("tagsAdd"), expect.objectContaining({
+        variables: { id: "gid://shopify/Order/123", tags: ["VIP"] }
+      }));
+      expect(mockAdmin.graphql).not.toHaveBeenCalledWith(expect.stringContaining("tagsRemove"), expect.anything());
+    });
+
+    it('should match if ANY condition matches when logic is OR', async () => {
+      const rules = [{
+        name: "OR Rule",
+        conditionLogic: "OR",
+        conditions: [
+          { field: "total_price", operator: "greater_than", value: "150" }, // False
+          { field: "customer.orders_count", operator: "equals", value: "2" } // True
+        ],
+        tags: ["VIP"],
+        isEnabled: true
+      }];
+      (TaggingRule.find as any).mockResolvedValue(rules);
+
+      const resource = { id: 123, total_price: "100", customer: { orders_count: 2 } };
+
+      await (TaggerService as any).evaluateTaggingRules(mockAdmin, "test-shop", resource, "orders");
+
+      expect(mockAdmin.graphql).toHaveBeenCalledWith(expect.stringContaining("tagsAdd"), expect.objectContaining({
+        variables: { id: "gid://shopify/Order/123", tags: ["VIP"] }
+      }));
+    });
+
+    it('should NOT match if NO condition matches when logic is OR', async () => {
+      const rules = [{
+        name: "OR Rule",
+        conditionLogic: "OR",
+        conditions: [
+          { field: "total_price", operator: "greater_than", value: "150" }, // False
+          { field: "customer.orders_count", operator: "equals", value: "5" } // False
+        ],
+        tags: ["VIP"],
+        isEnabled: true
+      }];
+      (TaggingRule.find as any).mockResolvedValue(rules);
+
+      const resource = { id: 123, total_price: "100", customer: { orders_count: 2 } };
+
+      await (TaggerService as any).evaluateTaggingRules(mockAdmin, "test-shop", resource, "orders");
+
+      expect(mockAdmin.graphql).not.toHaveBeenCalledWith(expect.stringContaining("tagsAdd"), expect.anything());
+    });
+  });
+
+  describe('checkConditions Operators', () => {
+    it('should handle "in" operator', () => {
+      const resource = { shipping_address: { country_code: "US" } };
+      const conditions = [{ field: "shipping_address.country_code", operator: "in", value: "US, CA, UK" }];
+      expect(TaggerService.checkConditions(resource, conditions)).toBe(true);
+    });
+
+    it('should handle "not_in" operator', () => {
+      const resource = { shipping_address: { country_code: "FR" } };
+      const conditions = [{ field: "shipping_address.country_code", operator: "not_in", value: "US, CA, UK" }];
+      expect(TaggerService.checkConditions(resource, conditions)).toBe(true);
+    });
+
+    it('should handle "is_empty" operator', () => {
+      const resource = { note: "" };
+      const conditions = [{ field: "note", operator: "is_empty", value: "" }];
+      expect(TaggerService.checkConditions(resource, conditions)).toBe(true);
+    });
+
+    it('should handle "is_not_empty" operator', () => {
+      const resource = { note: "Some note" };
+      const conditions = [{ field: "note", operator: "is_not_empty", value: "" }];
+      expect(TaggerService.checkConditions(resource, conditions)).toBe(true);
+    });
+  });
+});
