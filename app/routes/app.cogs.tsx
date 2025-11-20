@@ -15,6 +15,7 @@ import {
     InlineStack,
     Banner,
     Pagination,
+    Box,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useSearchParams } from "@remix-run/react";
@@ -22,13 +23,23 @@ import { CogsService } from "~/services/cogs.service";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { admin, session } = await authenticate.admin(request);
+    const { UsageService } = await import("~/services/usage.service");
+    const plan = await UsageService.getPlanType(session.shop);
+    const isFreePlan = plan === "Free";
+
     const url = new URL(request.url);
     const cursor = url.searchParams.get("page_info");
     const direction = url.searchParams.get("direction") || "next";
 
-    const paginationArgs = direction === "previous"
-        ? { last: 20, before: cursor }
-        : { first: 20, after: cursor };
+    let paginationArgs;
+    if (isFreePlan) {
+        // Free plan: Always fetch first 50, ignore cursor
+        paginationArgs = { first: 50 };
+    } else {
+        paginationArgs = direction === "previous"
+            ? { last: 20, before: cursor }
+            : { first: 20, after: cursor };
+    }
 
     const { products, pageInfo } = await CogsService.getProductsWithCosts(admin, paginationArgs);
 
@@ -39,8 +50,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     return json({
         products,
-        pageInfo,
-        currencyCode
+        pageInfo: isFreePlan ? { hasNextPage: false, hasPreviousPage: false } : pageInfo,
+        currencyCode,
+        isFreePlan
     });
 };
 
@@ -67,7 +79,7 @@ import { ProductRow, type ProductData } from "../components/Cogs/ProductRow";
 import { BulkApplyModal } from "../components/Cogs/BulkApplyModal";
 
 export default function COGS() {
-    const { products: initialProducts, pageInfo, currencyCode } = useLoaderData<typeof loader>();
+    const { products: initialProducts, pageInfo, currencyCode, isFreePlan } = useLoaderData<typeof loader>();
     const [searchParams, setSearchParams] = useSearchParams();
     const submit = useSubmit();
     const nav = useNavigation();
@@ -205,6 +217,19 @@ export default function COGS() {
             ]}
         >
             <Layout>
+                {isFreePlan && (
+                    <Layout.Section>
+
+                        <Box paddingBlockStart="400">
+                            <Banner tone="info">
+                                <Text as="p">
+                                    You are on the Free plan, which is limited to tracking 50 products.
+                                    <Button variant="plain" url="/app/billing">Upgrade to Pro</Button> for unlimited tracking.
+                                </Text>
+                            </Banner>
+                        </Box>
+                    </Layout.Section>
+                )}
                 <Layout.Section>
                     <Card padding="0">
                         <IndexTable
@@ -228,6 +253,7 @@ export default function COGS() {
                             {rowMarkup}
                         </IndexTable>
                     </Card>
+
 
                 </Layout.Section>
             </Layout>

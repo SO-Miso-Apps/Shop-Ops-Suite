@@ -5,6 +5,10 @@ export class MetafieldService {
         return await MetafieldRule.find({ shop }).sort({ createdAt: -1 });
     }
 
+    static async countRules(shop: string) {
+        return await MetafieldRule.countDocuments({ shop });
+    }
+
     static async createRule(shop: string, data: any) {
         return await MetafieldRule.create({
             shop,

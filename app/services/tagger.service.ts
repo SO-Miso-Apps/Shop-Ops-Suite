@@ -13,6 +13,10 @@ export class TaggerService {
         return await TaggingRule.find({ shop });
     }
 
+    static async countActiveRules(shop: string) {
+        return await TaggingRule.countDocuments({ shop, isEnabled: true });
+    }
+
     static async saveRule(shop: string, ruleId: string, isEnabled: boolean, params: any) {
         return await TaggingRule.findOneAndUpdate(
             { shop, ruleId },

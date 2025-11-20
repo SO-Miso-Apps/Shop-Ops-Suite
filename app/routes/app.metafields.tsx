@@ -29,7 +29,18 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { session } = await authenticate.admin(request);
     const rules = await MetafieldService.getRules(session.shop);
-    return json({ rules });
+
+    const { UsageService } = await import("~/services/usage.service");
+    const plan = await UsageService.getPlanType(session.shop);
+    const isFreePlan = plan === "Free";
+
+    let isLimitReached = false;
+    if (isFreePlan) {
+        const count = await MetafieldService.countRules(session.shop);
+        isLimitReached = count >= 5;
+    }
+
+    return json({ rules, isFreePlan, isLimitReached });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -43,6 +54,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (ruleData._id) {
             await MetafieldService.updateRule(ruleData._id, ruleData);
         } else {
+            const { UsageService } = await import("~/services/usage.service");
+            const plan = await UsageService.getPlanType(session.shop);
+            if (plan === "Free") {
+                const count = await MetafieldService.countRules(session.shop);
+                if (count >= 5) {
+                    return json({ status: "error", message: "Free plan limit reached. Upgrade to Pro to create more rules." }, { status: 403 });
+                }
+            }
             await MetafieldService.createRule(session.shop, ruleData);
         }
     } else if (actionType === "deleteRule") {
@@ -58,7 +77,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function MetafieldRules() {
-    const { rules } = useLoaderData<typeof loader>();
+    const { rules, isLimitReached } = useLoaderData<typeof loader>();
     const actionData = useActionData<typeof action>();
     const shopify = useAppBridge();
     const submit = useSubmit();
@@ -72,6 +91,8 @@ export default function MetafieldRules() {
     useEffect(() => {
         if (actionData?.status === "success") {
             shopify.toast.show("Action completed successfully");
+        } else if ((actionData as any)?.status === "error") {
+            shopify.toast.show((actionData as any)?.message || "An error occurred", { isError: true });
         }
     }, [actionData, shopify]);
 
@@ -186,11 +207,21 @@ export default function MetafieldRules() {
     return (
         <Page
             title="Metafield Automation"
-            primaryAction={{ content: "Create Rule", onAction: () => handleOpenModal() }}
+            primaryAction={{ content: "Create Rule", onAction: () => handleOpenModal(), disabled: isLimitReached }}
             subtitle="Automatically set metafields based on conditions"
         >
             <Layout>
                 <Layout.Section>
+                    {isLimitReached && (
+                        <Box paddingBlockEnd="400">
+                            <Banner tone="warning" title="Free Plan Limit Reached">
+                                <Text as="p">
+                                    You have reached the limit of 5 automation rules on the Free plan.
+                                    <Button variant="plain" url="/app/billing">Upgrade to Pro</Button> to create more rules.
+                                </Text>
+                            </Banner>
+                        </Box>
+                    )}
                     <Card padding="0">
                         {rules.length === 0 ? (
                             <EmptyState

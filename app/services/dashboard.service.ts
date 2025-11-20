@@ -34,12 +34,19 @@ export class DashboardService {
         // 3. Fetch Context Data for Insights
         const ordersResponse = await admin.graphql(RecentOrdersQuery);
         const ordersData = await ordersResponse.json();
-        const recentOrders = ordersData.data.orders.nodes;
-        console.log("recentOrders", recentOrders);
+        let recentOrders = ordersData.data.orders.nodes;
 
         const productsResponse = await admin.graphql(RecentProductsQuery);
         const productsData = await productsResponse.json();
-        const recentProducts = productsData.data.products.nodes;
+        let recentProducts = productsData.data.products.nodes;
+
+        // Check Plan Limits
+        const { UsageService } = await import("./usage.service");
+        const plan = await UsageService.getPlanType(shop);
+        if (plan === "Free") {
+            recentOrders = recentOrders.slice(0, 50);
+            recentProducts = recentProducts.slice(0, 50);
+        }
 
         const suggestions: AISuggestion[] = [];
 

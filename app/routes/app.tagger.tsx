@@ -15,9 +15,18 @@ import {
     BlockStack,
     InlineStack,
     Select,
+    Banner,
+    Box,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { TaggerService } from "../services/tagger.service";
+// We need to ensure TaggerService has countActiveRules. 
+// Since I cannot see TaggerService file content, I will assume I need to add it or use existing methods.
+// Wait, I should check TaggerService first. 
+// But I am in app.tagger.tsx. 
+// I will assume TaggerService needs this method and I should add it to TaggerService file if it doesn't exist.
+// But I am editing app.tagger.tsx here.
+// I will proceed with editing app.tagger.tsx and then check/update TaggerService.
 import { useAppBridge } from "@shopify/app-bridge-react";
 
 // --- Backend Logic ---
@@ -25,7 +34,18 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { session } = await authenticate.admin(request);
     const rules = await TaggerService.getRules(session.shop);
-    return json({ rules });
+
+    const { UsageService } = await import("~/services/usage.service");
+    const plan = await UsageService.getPlanType(session.shop);
+    const isFreePlan = plan === "Free";
+
+    let isLimitReached = false;
+    if (isFreePlan) {
+        const activeCount = await TaggerService.countActiveRules(session.shop);
+        isLimitReached = activeCount >= 5;
+    }
+
+    return json({ rules, isFreePlan, isLimitReached });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -37,6 +57,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const ruleId = formData.get("ruleId") as string;
         const isEnabled = formData.get("isEnabled") === "true";
         const params = JSON.parse(formData.get("params") as string);
+
+        if (isEnabled) {
+            const { UsageService } = await import("~/services/usage.service");
+            const plan = await UsageService.getPlanType(session.shop);
+            if (plan === "Free") {
+                const activeCount = await TaggerService.countActiveRules(session.shop);
+                // If we are enabling a rule (and it wasn't already enabled, although countActiveRules might include it if we don't be careful. 
+                // Let's assume countActiveRules counts currently active ones. 
+                // If we are enabling a NEW one, we need to check if count < 5.
+                // However, TaggerService.saveRule updates the rule. 
+                // If the rule was ALREADY active, we shouldn't block updates.
+                // But here we are just checking if we CAN enable it.
+                // Let's check if the rule is ALREADY active to avoid double counting or blocking updates.
+                const existingRule = (await TaggerService.getRules(session.shop)).find((r: any) => r.ruleId === ruleId);
+                if (!existingRule?.isEnabled && activeCount >= 5) {
+                    return json({ status: "error", message: "Free plan limit reached. Upgrade to Pro to enable more rules." }, { status: 403 });
+                }
+            }
+        }
 
         await TaggerService.saveRule(session.shop, ruleId, isEnabled, params);
     }
@@ -80,7 +119,7 @@ const RECIPES = [
 ];
 
 export default function SmartTagger() {
-    const { rules } = useLoaderData<typeof loader>();
+    const { rules, isLimitReached } = useLoaderData<typeof loader>();
     const fetcher = useFetcher();
     const actionData = useActionData<typeof action>();
     const shopify = useAppBridge();
@@ -95,6 +134,8 @@ export default function SmartTagger() {
     useEffect(() => {
         if (actionData?.status === "success" || (fetcher.data as any)?.status === "success") {
             shopify.toast.show("Rule updated successfully");
+        } else if ((actionData as any)?.status === "error" || (fetcher.data as any)?.status === "error") {
+            shopify.toast.show((actionData as any)?.message || (fetcher.data as any)?.message || "An error occurred", { isError: true });
         }
     }, [actionData, fetcher.data, shopify]);
 
@@ -152,6 +193,16 @@ export default function SmartTagger() {
         <Page title="Smart Tagger" subtitle="Automate your tagging workflows">
             <Layout>
                 <Layout.Section>
+                    {isLimitReached && (
+                        <Box paddingBlockEnd="400">
+                            <Banner tone="warning" title="Free Plan Limit Reached">
+                                <Text as="p">
+                                    You have reached the limit of 5 active rules on the Free plan.
+                                    <Button variant="plain" url="/app/billing">Upgrade to Pro</Button> to enable more rules.
+                                </Text>
+                            </Banner>
+                        </Box>
+                    )}
                     <Card padding="0">
                         <ResourceList
                             resourceName={{ singular: "rule", plural: "rules" }}
