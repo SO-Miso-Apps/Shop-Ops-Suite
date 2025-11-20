@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData, useFetcher } from "@remix-run/react";
 import {
     Page,
     Layout,
@@ -104,11 +104,26 @@ export default function SmartTagger() {
         setModalOpen(true);
     };
 
-    const handleToggle = (recipe: any, currentValue: boolean) => {
-        const existingRule = rules.find((r: any) => r.ruleId === recipe.id);
-        const params = existingRule?.params || {}; // Keep existing params
+    const fetcher = useFetcher();
 
-        submit(
+    // Check if a specific rule is being toggled
+    const isToggling = (ruleId: string) => {
+        return fetcher.state === "submitting" && fetcher.formData?.get("ruleId") === ruleId;
+    };
+
+    const handleToggle = (recipe: any, currentValue: boolean) => {
+        // event.stopPropagation() is handled by the wrapper div
+
+        // If turning ON and the rule has parameters, open modal instead
+        if (!currentValue && recipe.paramFields.length > 0) {
+            handleConfigure(recipe);
+            return;
+        }
+
+        const existingRule = rules.find((r: any) => r.ruleId === recipe.id);
+        const params = existingRule?.params || {};
+
+        fetcher.submit(
             {
                 actionType: "saveRule",
                 ruleId: recipe.id,
@@ -122,7 +137,6 @@ export default function SmartTagger() {
     const handleSaveParams = () => {
         if (!selectedRule) return;
 
-        // Also enable the rule when saving params
         submit(
             {
                 actionType: "saveRule",
@@ -146,6 +160,7 @@ export default function SmartTagger() {
                             renderItem={(item) => {
                                 const rule = rules.find((r: any) => r.ruleId === item.id);
                                 const isEnabled = rule?.isEnabled || false;
+                                const loading = isToggling(item.id);
 
                                 return (
                                     <ResourceItem
@@ -162,18 +177,33 @@ export default function SmartTagger() {
                                                     <Badge tone={isEnabled ? "success" : "info"}>
                                                         {isEnabled ? "Active" : "Inactive"}
                                                     </Badge>
-                                                    <Button
-                                                        variant={isEnabled ? "primary" : "secondary"}
-                                                        onClick={() => handleToggle(item, isEnabled)}
-                                                        loading={isLoading}
-                                                    >
-                                                        {isEnabled ? "Turn Off" : "Turn On"}
-                                                    </Button>
+                                                    <div onClick={(e) => e.stopPropagation()}>
+                                                        <Button
+                                                            variant={isEnabled ? "primary" : "secondary"}
+                                                            onClick={() => handleToggle(item, isEnabled)}
+                                                            loading={loading}
+                                                        >
+                                                            {isEnabled ? "Turn Off" : "Turn On"}
+                                                        </Button>
+                                                    </div>
                                                 </InlineStack>
                                             </InlineStack>
                                             <Text variant="bodyMd" as="p" tone="subdued">
                                                 {item.description}
                                             </Text>
+                                            {rule?.params && Object.keys(rule.params).length > 0 && (
+                                                <BlockStack gap="100">
+                                                    {item.paramFields.map((field: any) => {
+                                                        const value = rule.params[field.key];
+                                                        if (!value) return null;
+                                                        return (
+                                                            <Text key={field.key} variant="bodySm" tone="subdued" as="p">
+                                                                • {field.label}: <Text as="span" fontWeight="semibold">{value}</Text>
+                                                            </Text>
+                                                        );
+                                                    })}
+                                                </BlockStack>
+                                            )}
                                         </BlockStack>
                                     </ResourceItem>
                                 );
