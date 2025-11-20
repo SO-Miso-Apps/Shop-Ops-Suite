@@ -180,10 +180,13 @@ export default function Billing() {
 										<Text variant="headingLg" as="h4">$0/month</Text>
 										<FeaturesList
 											features={[
-												'500 items/month limit',
-												'Basic tag operations',
+												'5 smart tag activations',
+												'COGS & Profit tracking for 50 products',
+												'5 metafield conditions',
+												'500 operations per month',
 												'Activity logs',
 												'Tag scanning',
+												'AI insights',
 											]}
 										/>
 									</BlockStack>
@@ -205,11 +208,14 @@ export default function Billing() {
 										<Text variant="headingLg" as="h4">$9.99/month</Text>
 										<FeaturesList
 											features={[
+												'Unlimited Smart tags activations',
+												'Unlimited products COGS & Profit tracking',
+												'Unlimited Metafields conditions',
 												'Unlimited operations',
-												'Backup & Revert capability',
-												'AI Insights & recommendations',
+												'Activity logs',
+												'Tag scanning',
+												'AI insights',
 												'Priority support',
-												'Advanced bulk operations',
 											]}
 										/>
 										{plan !== BillingPlans.Pro && plan !== BillingPlans.ProAnnual && (
@@ -247,7 +253,6 @@ export default function Billing() {
 											features={[
 												'All Pro features',
 												'2 months free',
-												'Priority feature access'
 											]}
 										/>
 										{plan !== BillingPlans.ProAnnual && (
@@ -356,7 +361,7 @@ function FeaturesList({ features }: { features: string[] }) {
 	return (
 		<BlockStack gap="100">
 			{features.map((feature, index) => (
-				<InlineStack key={index} align="start" blockAlign="center" gap="100">
+				<InlineStack key={index} align="start" blockAlign="start" gap="100" wrap={false}>
 					<span><Icon source={CheckCircleIcon} /></span>
 					<Text as="p">{feature}</Text>
 				</InlineStack>

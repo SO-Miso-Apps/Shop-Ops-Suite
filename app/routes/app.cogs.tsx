@@ -21,7 +21,7 @@ import { useSearchParams } from "@remix-run/react";
 import { CogsService } from "~/services/cogs.service";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-    const { admin } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
     const url = new URL(request.url);
     const cursor = url.searchParams.get("page_info");
     const direction = url.searchParams.get("direction") || "next";
@@ -32,9 +32,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     const { products, pageInfo } = await CogsService.getProductsWithCosts(admin, paginationArgs);
 
+    // Fetch shop currency
+    const { ShopConfig } = await import("~/models/ShopConfig");
+    const shopConfig = await ShopConfig.findOne({ shop: session.shop });
+    const currencyCode = shopConfig?.currencyCode || "USD";
+
     return json({
         products,
-        pageInfo
+        pageInfo,
+        currencyCode
     });
 };
 
@@ -61,7 +67,7 @@ import { ProductRow, type ProductData } from "../components/Cogs/ProductRow";
 import { BulkApplyModal } from "../components/Cogs/BulkApplyModal";
 
 export default function COGS() {
-    const { products: initialProducts, pageInfo } = useLoaderData<typeof loader>();
+    const { products: initialProducts, pageInfo, currencyCode } = useLoaderData<typeof loader>();
     const [searchParams, setSearchParams] = useSearchParams();
     const submit = useSubmit();
     const nav = useNavigation();
@@ -177,6 +183,7 @@ export default function COGS() {
                 product={product}
                 index={index}
                 onUpdateCost={handleUpdateCost}
+                currencyCode={currencyCode}
             />
         )
     );

@@ -13,6 +13,7 @@ import {
     Tooltip,
 } from "@shopify/polaris";
 import { ChevronDownIcon, ChevronUpIcon, AlertCircleIcon } from "@shopify/polaris-icons";
+import { resizeShopifyImageCdn } from "~/utils/resize-shopify-image-cdn";
 
 export interface VariantData {
     id: string;
@@ -35,9 +36,25 @@ interface ProductRowProps {
     product: ProductData;
     index: number;
     onUpdateCost: (inventoryItemId: string, newCost: number) => void;
+    currencyCode: string;
 }
 
-export function ProductRow({ product, index, onUpdateCost }: ProductRowProps) {
+export function ProductRow({ product, index, onUpdateCost, currencyCode }: ProductRowProps) {
+    // Get currency symbol from currency code
+    const getCurrencySymbol = (code: string) => {
+        const symbols: { [key: string]: string } = {
+            USD: "$",
+            EUR: "€",
+            GBP: "£",
+            CAD: "$",
+            AUD: "$",
+            JPY: "¥",
+            CNY: "¥",
+            INR: "₹",
+        };
+        return symbols[code] || code;
+    };
+    const currencySymbol = getCurrencySymbol(currencyCode);
     const [expanded, setExpanded] = useState(false);
 
     // Determine if all variants have the same cost
@@ -92,7 +109,7 @@ export function ProductRow({ product, index, onUpdateCost }: ProductRowProps) {
                     </div>
                     {product.image && (
                         <img
-                            src={product.image}
+                            src={resizeShopifyImageCdn(product.image, 128, 128)}
                             alt={product.title}
                             style={{ width: '32px', height: '32px', objectFit: 'cover', borderRadius: '4px' }}
                         />
@@ -123,7 +140,7 @@ export function ProductRow({ product, index, onUpdateCost }: ProductRowProps) {
                         onChange={handleParentCostChange}
                         placeholder="Set all..."
                         autoComplete="off"
-                        prefix="$"
+                        prefix={currencySymbol}
                         size="slim"
                     />
                 </div>
@@ -150,8 +167,8 @@ export function ProductRow({ product, index, onUpdateCost }: ProductRowProps) {
 
         return (
             <div key={variant.id} style={{ padding: '8px 16px', borderBottom: '1px solid #f1f2f4', backgroundColor: '#fafbfb' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr 1fr 1fr', gap: '16px', alignItems: 'center' }}>
-                    <div style={{ paddingLeft: '36px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '8fr 1fr 1fr 1fr 1fr', gap: '16px', alignItems: 'center' }}>
+                    <div style={{ paddingLeft: '36px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <Text variant="bodySm" as="span">{variant.title}</Text>
                     </div>
                     <div>
@@ -165,14 +182,14 @@ export function ProductRow({ product, index, onUpdateCost }: ProductRowProps) {
                             value={variant.cost.toString()}
                             onChange={(val) => onUpdateCost(variant.inventoryItemId, parseFloat(val))}
                             autoComplete="off"
-                            prefix="$"
+                            prefix={currencySymbol}
                             size="slim"
                         />
                         {isAnomaly && (
                             <div style={{ marginTop: '4px' }}>
                                 <Tooltip content="Price/Cost ratio warning: Cost is higher than price or price is > 5x cost">
                                     <InlineStack gap="100" blockAlign="center">
-                                        <Icon source={AlertCircleIcon} tone="critical" />
+                                        <span><Icon source={AlertCircleIcon} tone="critical" /></span>
                                         <Text variant="bodyXs" tone="critical" as="span">Check Ratio</Text>
                                     </InlineStack>
                                 </Tooltip>

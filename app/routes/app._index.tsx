@@ -11,6 +11,7 @@ import {
   Page,
   Text,
 } from "@shopify/polaris";
+import { useEffect, useState } from "react";
 import { DashboardService } from "../services/dashboard.service";
 import { authenticate } from "../shopify.server";
 
@@ -33,8 +34,36 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function Dashboard() {
-  const { stats, suggestions } = useLoaderData<typeof loader>();
+  const { stats, suggestions, charts } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const [isClient, setIsClient] = useState(false);
+  const [ChartsModule, setChartsModule] = useState<any>(null);
+
+  // Only render charts on client-side to avoid SSR issues
+  useEffect(() => {
+    setIsClient(true);
+    // Dynamically import polaris-viz only on client
+    import('@shopify/polaris-viz').then((module) => {
+      setChartsModule(module);
+    });
+  }, []);
+
+  // Prepare data for LineChart (Activity Trend)
+  const activityTrendData = charts?.activityTrend ? [{
+    name: 'Activities',
+    data: charts.activityTrend.map((item: any) => ({
+      key: item.date,
+      value: item.count,
+    })),
+  }] : [];
+
+  // Prepare data for BarChart (Category Breakdown)
+  const categoryBreakdownData = charts?.categoryBreakdown ? [{
+    data: charts.categoryBreakdown.map((item: any) => ({
+      key: item.name,
+      value: item.value,
+    })),
+  }] : [];
 
   console.log("suggestions", suggestions);
   return (
@@ -48,6 +77,66 @@ export default function Dashboard() {
               <StatsCard title="Total Orders" value={stats.totalOrders.toString()} />
               <StatsCard title="Total Products" value={stats.totalProducts.toString()} />
               <StatsCard title="Hours Saved" value={`${stats.savingsHours} h`} highlight />
+            </InlineGrid>
+          </Layout.Section>
+
+          {/* Charts Section */}
+          <Layout.Section>
+            <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
+              {/* Activity Trend Chart */}
+              <Card>
+                <BlockStack gap="400">
+                  <Text variant="headingMd" as="h3">
+                    Activity Trend (Last 7 Days)
+                  </Text>
+                  <Divider />
+                  <Box minHeight="300px">
+                    {isClient && ChartsModule && activityTrendData.length > 0 && activityTrendData[0].data.length > 0 ? (
+                      <ChartsModule.LineChart
+                        data={activityTrendData}
+                        theme="Light"
+                        xAxisOptions={{
+                          labelFormatter: (value: string | number | null) => {
+                            if (!value) return '';
+                            const date = new Date(value);
+                            return `${date.getMonth() + 1}/${date.getDate()}`;
+                          },
+                        }}
+                      />
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '300px', background: '#f1f2f4', borderRadius: '8px' }}>
+                        <Text variant="bodyMd" as="p" tone="subdued">
+                          {!isClient || !ChartsModule ? 'Loading chart...' : 'No activity data available'}
+                        </Text>
+                      </div>
+                    )}
+                  </Box>
+                </BlockStack>
+              </Card>
+
+              {/* Category Breakdown Chart */}
+              <Card>
+                <BlockStack gap="400">
+                  <Text variant="headingMd" as="h3">
+                    Activity by Category
+                  </Text>
+                  <Divider />
+                  <Box minHeight="300px">
+                    {isClient && ChartsModule && categoryBreakdownData.length > 0 && categoryBreakdownData[0].data.length > 0 ? (
+                      <ChartsModule.BarChart
+                        data={categoryBreakdownData}
+                        theme="Light"
+                      />
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '300px', background: '#f1f2f4', borderRadius: '8px' }}>
+                        <Text variant="bodyMd" as="p" tone="subdued">
+                          {!isClient || !ChartsModule ? 'Loading chart...' : 'No category data available'}
+                        </Text>
+                      </div>
+                    )}
+                  </Box>
+                </BlockStack>
+              </Card>
             </InlineGrid>
           </Layout.Section>
 
@@ -93,26 +182,6 @@ export default function Dashboard() {
                 )}
               </BlockStack>
             </Box>
-          </Layout.Section>
-
-          {/* Savings Chart Section (Placeholder for MVP) */}
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="400">
-                <Text variant="headingMd" as="h3">
-                  Automation Savings (Last 30 Days)
-                </Text>
-                <Divider />
-                <Box padding="400" minHeight="200px">
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', background: '#f1f2f4', borderRadius: '8px', color: '#6d7175' }}>
-                    <Text variant="bodyMd" as="p">
-                      Savings Chart Visualization (Coming Soon)
-                    </Text>
-                    {/* In a real implementation, we would use Recharts or similar here */}
-                  </div>
-                </Box>
-              </BlockStack>
-            </Card>
           </Layout.Section>
         </Layout>
       </BlockStack>

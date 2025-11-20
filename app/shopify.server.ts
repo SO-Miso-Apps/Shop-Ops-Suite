@@ -57,6 +57,9 @@ const shopify = shopifyApp({
           {
             shop: session.shop,
             accessToken: session.accessToken,
+            currencyCode: shopInfo.currencyCode || "USD",
+            email: shopInfo.email || "",
+            shopName: shopInfo.name || "",
             isActive: true,
             updatedAt: new Date(),
           },

@@ -1,5 +1,6 @@
 import { TaggingRule } from "../models/TaggingRule";
 import { ShopDataQuery, RecentOrdersQuery, RecentProductsQuery } from "../graphql/dashboard";
+import { ActivityService } from "./activity.service";
 
 interface DashboardStats {
     totalOrders: number;
@@ -139,6 +140,12 @@ export class DashboardService {
         // 4. Calculate Savings (Mock logic for MVP)
         const savingsHours = Math.round((activeRules * totalOrders * 0.1) / 60);
 
+        // 5. Fetch Activity Data for Charts
+        const categoryStats = await ActivityService.getCategoryStats(shop);
+
+        // Get last 7 days of activity for trend chart
+        const activityTrend = await this.getActivityTrend(shop, 7);
+
         return {
             stats: {
                 totalOrders,
@@ -147,6 +154,52 @@ export class DashboardService {
                 savingsHours: savingsHours || 0,
             },
             suggestions: topSuggestions,
+            charts: {
+                categoryBreakdown: categoryStats.map((stat: any) => ({
+                    name: stat._id || 'Unknown',
+                    value: stat.count,
+                })),
+                activityTrend,
+            },
         };
+    }
+
+    private static async getActivityTrend(shop: string, days: number) {
+        const { ActivityLog } = await import("../models/ActivityLog");
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - days);
+
+        const dailyActivity = await ActivityLog.aggregate([
+            {
+                $match: {
+                    shop,
+                    timestamp: { $gte: startDate },
+                },
+            },
+            {
+                $group: {
+                    _id: {
+                        $dateToString: { format: "%Y-%m-%d", date: "$timestamp" }
+                    },
+                    count: { $sum: 1 },
+                },
+            },
+            { $sort: { _id: 1 } },
+        ]);
+
+        // Fill in missing days with 0
+        const result = [];
+        for (let i = days - 1; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            const dateStr = date.toISOString().split('T')[0];
+            const found = dailyActivity.find((d: any) => d._id === dateStr);
+            result.push({
+                date: dateStr,
+                count: found ? found.count : 0,
+            });
+        }
+
+        return result;
     }
 }
