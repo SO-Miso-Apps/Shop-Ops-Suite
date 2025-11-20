@@ -1,5 +1,5 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { useActionData, useNavigation, useSubmit, useLoaderData } from "@remix-run/react";
+import { useActionData, useNavigation, useSubmit, useLoaderData, Link } from "@remix-run/react";
 import {
   Banner,
   BlockStack,
@@ -181,6 +181,7 @@ export default function DataCleaner() {
     limit?: number | null;
   };
 
+  const [isShowUpgradeBanner, setShowUpgradeBanner] = useState(true);
   const shopify = useAppBridge();
   const submit = useSubmit();
   const nav = useNavigation();
@@ -256,25 +257,20 @@ export default function DataCleaner() {
       <Layout>
         <Layout.Section>
           {/* Usage Banner */}
-          {loaderData.plan === "Free" && (
+          {loaderData.plan === "Free" && isShowUpgradeBanner && (
             <Banner
               tone={usagePercent >= 90 ? "warning" : "info"}
               title={`${loaderData.plan} Plan - ${loaderData.usage.count}/${loaderData.limit} operations this month`}
+              onDismiss={() => setShowUpgradeBanner(false)}
             >
               <BlockStack gap="200">
                 <ProgressBar progress={usagePercent} size="small" />
                 {usagePercent >= 90 && (
                   <Text as="p">
-                    You're running low on quota. Upgrade to Pro for unlimited operations.
+                    You're running low on quota. Upgrade to Pro for unlimited operations. <Link to="/app/billing">Upgrade Now</Link>
                   </Text>
                 )}
               </BlockStack>
-            </Banner>
-          )}
-
-          {getPlan(loaderData.plan) === "Pro" && (
-            <Banner tone="success" title="Pro Plan - Unlimited Operations">
-              <Text as="p">Enjoy unlimited cleanup operations, backups, and AI insights.</Text>
             </Banner>
           )}
         </Layout.Section>

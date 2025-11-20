@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData, Link } from "@remix-run/react";
 import {
     Page,
     Layout,
@@ -129,6 +129,7 @@ export default function BulkOperations() {
     const isPreview = actionData?.status === "preview";
     const isQuotaExceeded = actionData?.status === "quota_exceeded";
 
+    const [isShowUpgradeBanner, setShowUpgradeBanner] = useState(true);
     const [formState, setFormState] = useState({
         resourceType: "products",
         operation: "replace",
@@ -168,27 +169,23 @@ export default function BulkOperations() {
             <Layout>
                 <Layout.Section>
                     {/* Usage Banner */}
-                    {loaderData.plan === "Free" && (
+                    {loaderData.plan === "Free" && isShowUpgradeBanner && (
                         <Banner
                             tone={usagePercent >= 90 ? "warning" : "info"}
                             title={`${loaderData.plan} Plan - ${loaderData.usage.count}/${loaderData.limit} operations this month`}
+                            onDismiss={() => setShowUpgradeBanner(false)}
                         >
                             <BlockStack gap="200">
                                 <ProgressBar progress={usagePercent} size="small" />
                                 {usagePercent >= 90 && (
                                     <Text as="p">
-                                        You're running low on quota. Upgrade to Pro for unlimited operations.
+                                        You're running low on quota. Upgrade to Pro for unlimited operations. <Link to="/app/billing">Upgrade Now</Link>
                                     </Text>
                                 )}
                             </BlockStack>
                         </Banner>
                     )}
 
-                    {getPlan(loaderData.plan) === "Pro" && (
-                        <Banner tone="success" title="Pro Plan - Unlimited Operations">
-                            <Text as="p">Enjoy unlimited bulk operations, backups, and AI insights.</Text>
-                        </Banner>
-                    )}
                 </Layout.Section>
                 <Layout.Section>
                     <Card>
