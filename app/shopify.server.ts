@@ -77,16 +77,14 @@ const shopify = shopifyApp({
         }
 
         // 4. Log authentication activity
-        const { ActivityLog } = await import("./models/ActivityLog");
-        await ActivityLog.create({
+        const { ActivityService } = await import("./services/activity.service");
+        await ActivityService.createLog({
           shop: session.shop,
           resourceType: "Shop",
           resourceId: shopInfo.id,
           action: "App Authentication",
-          category: "System",
           detail: `Shop "${shopInfo.name}" (${shopInfo.plan.displayName} plan) authenticated successfully`,
           status: "Success",
-          timestamp: new Date(),
         });
 
         console.log(`✅ Shop ${session.shop} authenticated successfully`);
@@ -99,16 +97,14 @@ const shopify = shopifyApp({
 
         // Log failed authentication attempt
         try {
-          const { ActivityLog } = await import("./models/ActivityLog");
-          await ActivityLog.create({
+          const { ActivityService } = await import("./services/activity.service");
+          await ActivityService.createLog({
             shop: session.shop,
             resourceType: "Shop",
             resourceId: session.shop,
             action: "App Authentication Failed",
-            category: "System",
             detail: `Authentication error: ${error instanceof Error ? error.message : 'Unknown error'}`,
             status: "Failed",
-            timestamp: new Date(),
           });
         } catch (logError) {
           console.error("Failed to log authentication error:", logError);

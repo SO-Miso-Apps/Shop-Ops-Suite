@@ -1,5 +1,5 @@
 import { unauthenticated } from "../shopify.server";
-import { ActivityLog } from "../models/ActivityLog";
+import { ActivityService } from "./activity.service";
 import { BulkOperationService } from "./bulk_operation.service";
 import { cleanerQueue } from "../queues";
 import { Backup } from "../models/Backup";
@@ -49,7 +49,7 @@ export class CleanerService {
                 const bulkOp = await BulkOperationService.runBulkQuery(shop, query);
                 await cleanerQueue.add(job.name, { ...job.data, step: 'polling_query', operationId: bulkOp.id, resourceType: currentResourceType }, { delay: 5000 });
 
-                await ActivityLog.create({
+                await ActivityService.createLog({
                     shop,
                     resourceType: "Mixed",
                     resourceId: "Bulk",
@@ -76,7 +76,7 @@ export class CleanerService {
                             await cleanerQueue.add(job.name, { ...job.data, step: 'init', resourceType: 'customers' }, { delay: 0 });
                             return;
                         }
-                        await ActivityLog.create({
+                        await ActivityService.createLog({
                             shop,
                             resourceType: "Mixed",
                             resourceId: "Bulk",
@@ -169,7 +169,7 @@ export class CleanerService {
                     // Record usage
                     await UsageService.recordOperation(shop, count);
 
-                    await ActivityLog.create({
+                    await ActivityService.createLog({
                         shop,
                         resourceType: "Mixed",
                         resourceId: "Bulk",
@@ -189,7 +189,7 @@ export class CleanerService {
 
         } catch (error) {
             console.error("Cleaner job error:", error);
-            await ActivityLog.create({
+            await ActivityService.createLog({
                 shop,
                 resourceType: "Mixed",
                 resourceId: "Bulk",

@@ -81,6 +81,7 @@ const RECIPES = [
 
 export default function SmartTagger() {
     const { rules } = useLoaderData<typeof loader>();
+    const fetcher = useFetcher();
     const actionData = useActionData<typeof action>();
     const shopify = useAppBridge();
     const submit = useSubmit();
@@ -92,10 +93,10 @@ export default function SmartTagger() {
     const [formParams, setFormParams] = useState<any>({});
 
     useEffect(() => {
-        if (actionData?.status === "success") {
+        if (actionData?.status === "success" || (fetcher.data as any)?.status === "success") {
             shopify.toast.show("Rule updated successfully");
         }
-    }, [actionData, shopify]);
+    }, [actionData, fetcher.data, shopify]);
 
     const handleConfigure = (recipe: any) => {
         const existingRule = rules.find((r: any) => r.ruleId === recipe.id);
@@ -103,8 +104,6 @@ export default function SmartTagger() {
         setFormParams(existingRule?.params || {});
         setModalOpen(true);
     };
-
-    const fetcher = useFetcher();
 
     // Check if a specific rule is being toggled
     const isToggling = (ruleId: string) => {
@@ -137,7 +136,7 @@ export default function SmartTagger() {
     const handleSaveParams = () => {
         if (!selectedRule) return;
 
-        submit(
+        fetcher.submit(
             {
                 actionType: "saveRule",
                 ruleId: selectedRule.id,

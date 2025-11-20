@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs } from '@remix-run/node';
-import { ActivityLog } from '~/db.server';
+import { ActivityService } from '~/services/activity.service';
 import { authenticate, BillingPlans } from '~/shopify.server';
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -25,15 +25,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         { upsert: true }
       );
 
-      await ActivityLog.create({
+      await ActivityService.createLog({
         shop: session.shop,
         resourceType: "Billing",
         resourceId: plan,
         action: "Billing Confirmed",
-        category: "System",
         detail: `${plan} plan subscription confirmed and activated`,
         status: "Success",
-        timestamp: new Date(),
       });
     }
     return redirect('/app/billing');

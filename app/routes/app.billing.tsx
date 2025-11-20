@@ -19,6 +19,7 @@ import {
 } from "@shopify/polaris";
 import { CheckCircleIcon } from "@shopify/polaris-icons";
 import { useState } from "react";
+import { ActivityService } from "~/services/activity.service";
 import { BillingPlans } from "../enums/BillingPlans";
 import { ActivityLog } from "../models/ActivityLog";
 import { UsageService } from "../services/usage.service";
@@ -62,15 +63,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 				prorate: true,
 			});
 
-			await ActivityLog.create({
+			await ActivityService.createLog({
 				shop: session.shop,
 				resourceType: "Billing",
 				resourceId: plan,
 				action: "Billing Cancelled",
-				category: "System",
 				detail: `${plan} plan subscription cancelled`,
 				status: "Success",
-				timestamp: new Date(),
 			});
 
 			return redirect('/app/billing');

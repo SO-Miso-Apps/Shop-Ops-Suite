@@ -1,5 +1,5 @@
 import { unauthenticated } from "../shopify.server";
-import { ActivityLog } from "../db.server";
+import { ActivityService } from "./activity.service";
 import { BulkOperationService } from "./bulk_operation.service";
 import { bulkQueue } from "../queues";
 import { Backup } from "../models/Backup";
@@ -119,12 +119,13 @@ export async function processBulkJob(job: any) {
       const bulkOp = await BulkOperationService.runBulkQuery(shop, query);
       await bulkQueue.add(job.name, { ...job.data, step: 'polling_query', operationId: bulkOp.id }, { delay: 5000 });
 
-      await ActivityLog.create({
+      await ActivityService.createLog({
         shop,
         resourceType,
         resourceId: "Bulk",
         action: "Bulk Operation",
         detail: `Started Bulk Query: ${bulkOp.id}`,
+        jobId: job.id,
         status: "Pending",
       });
       return;
@@ -141,12 +142,13 @@ export async function processBulkJob(job: any) {
 
       if (bulkOp.status === 'COMPLETED') {
         if (parseInt(bulkOp.objectCount) === 0) {
-          await ActivityLog.create({
+          await ActivityService.createLog({
             shop,
             resourceType,
             resourceId: "Bulk",
             action: "Bulk Operation",
             detail: `No items found with tag '${findTag}'`,
+            jobId: job.id,
             status: "Success",
           });
           return;
@@ -164,12 +166,13 @@ export async function processBulkJob(job: any) {
 
       // Check if resultUrl exists before trying to fetch
       if (!resultUrl) {
-        await ActivityLog.create({
+        await ActivityService.createLog({
           shop,
           resourceType,
           resourceId: "Bulk",
           action: "Bulk Operation",
           detail: `No results available for tag operation '${findTag}'`,
+          jobId: job.id,
           status: "Failed",
         });
         return;
@@ -233,12 +236,13 @@ export async function processBulkJob(job: any) {
       }
 
       if (mutations.length === 0) {
-        await ActivityLog.create({
+        await ActivityService.createLog({
           shop,
           resourceType,
           resourceId: "Bulk",
           action: "Bulk Operation",
           detail: `No updates needed for ${lines.length} items.`,
+          jobId: job.id,
           status: "Success",
         });
         return;
@@ -296,12 +300,13 @@ export async function processBulkJob(job: any) {
         await UsageService.recordOperation(shop, count);
 
         // We could check for errors in the result file, but for MVP we assume success if no system errors.
-        await ActivityLog.create({
+        await ActivityService.createLog({
           shop,
           resourceType,
           resourceId: "Bulk",
           action: "Bulk Operation",
           detail: `Successfully updated ${count} items.`,
+          jobId: job.id,
           status: "Success",
         });
         return;
@@ -312,12 +317,13 @@ export async function processBulkJob(job: any) {
 
   } catch (error) {
     console.error("Bulk job error:", error);
-    await ActivityLog.create({
+    await ActivityService.createLog({
       shop,
       resourceType,
       resourceId: "Bulk",
       action: "Bulk Operation",
       detail: `Failed: ${(error as Error).message}`,
+      jobId: job.id,
       status: "Failed",
     });
     throw error;

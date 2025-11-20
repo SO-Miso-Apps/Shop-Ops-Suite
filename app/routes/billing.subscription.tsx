@@ -1,5 +1,5 @@
 import type { LoaderFunctionArgs } from '@remix-run/node';
-import { ActivityLog } from '~/db.server';
+import { ActivityService } from '~/services/activity.service';
 import { authenticate, BillingPlans } from '~/shopify.server';
 import { getMyshopify } from '~/utils/get-myshopify';
 
@@ -14,15 +14,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     isTest: process.env.NODE_ENV !== 'production',
     returnUrl: `https://admin.shopify.com/store/${myshopify}/apps/${process.env.SHOPIFY_API_KEY}/billing/subscription-confirm?plan=${plan}`,
   });
-  await ActivityLog.create({
+  await ActivityService.createLog({
     shop: session.shop,
     resourceType: "Billing",
     resourceId: plan,
     action: "Billing Request",
-    category: "System",
     detail: `${plan} plan subscription requested`,
     status: "Success",
-    timestamp: new Date(),
   });
   return null;
 };

@@ -1,6 +1,6 @@
 import { unauthenticated } from "../shopify.server";
+import { ActivityService } from "./activity.service";
 import { TaggingRule } from "../models/TaggingRule";
-import { ActivityLog } from "../models/ActivityLog";
 import { MetafieldRule } from "../models/MetafieldRule";
 
 interface WebhookPayload {
@@ -58,7 +58,7 @@ export class TaggerService {
 
         } catch (error) {
             console.error(`Error processing webhook ${topic}:`, error);
-            await ActivityLog.create({
+            await ActivityService.createLog({
                 shop,
                 resourceType: 'System',
                 resourceId: 'N/A',
@@ -159,7 +159,9 @@ export class TaggerService {
                 },
             });
 
-            await ActivityLog.insertMany(logs);
+            for (const log of logs) {
+                await ActivityService.createLog(log);
+            }
         }
     }
 
@@ -216,7 +218,9 @@ export class TaggerService {
                 },
             });
 
-            await ActivityLog.insertMany(logs);
+            for (const log of logs) {
+                await ActivityService.createLog(log);
+            }
         }
     }
 
@@ -293,7 +297,7 @@ export class TaggerService {
                     throw new Error(`Shopify UserErrors: ${errors}`);
                 }
 
-                await ActivityLog.create({
+                await ActivityService.createLog({
                     shop,
                     resourceType: resourceType === "products" ? "Product" : "Customer",
                     resourceId: resource.id.toString(),
@@ -304,7 +308,7 @@ export class TaggerService {
 
             } catch (error) {
                 console.error("❌ Error executing metafieldsSet mutation:", error);
-                await ActivityLog.create({
+                await ActivityService.createLog({
                     shop,
                     resourceType: resourceType === "products" ? "Product" : "Customer",
                     resourceId: resource.id.toString(),

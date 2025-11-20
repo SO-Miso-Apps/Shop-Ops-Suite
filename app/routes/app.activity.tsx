@@ -7,12 +7,12 @@ import {
     IndexTable,
     Text,
     Badge,
-    useIndexResourceState,
     ChoiceList,
     IndexFilters,
     type IndexFiltersProps,
     useSetIndexFiltersMode,
     Button,
+    Tooltip,
 } from "@shopify/polaris";
 import { useCallback } from "react";
 import { authenticate } from "../shopify.server";
@@ -89,9 +89,6 @@ export default function Activity() {
         singular: 'log',
         plural: 'logs',
     };
-
-    const { selectedResources, allResourcesSelected, handleSelectionChange } =
-        useIndexResourceState(logs);
 
     // Get filter state from URL params
     const currentCategory = searchParams.get('category') || 'All';
@@ -206,11 +203,10 @@ export default function Activity() {
 
     // No client-side filtering - logs already filtered by backend
     const rowMarkup = logs.map(
-        ({ id, resourceType, resourceId, action, detail, status, timestamp, hasBackup, jobId }: any, index: number) => (
+        ({ id, resourceType, action, detail, status, timestamp, hasBackup, jobId }: any, index: number) => (
             <IndexTable.Row
                 id={id}
                 key={id}
-                selected={selectedResources.includes(id)}
                 position={index}
             >
                 <IndexTable.Cell>
@@ -219,7 +215,13 @@ export default function Activity() {
                     </Text>
                 </IndexTable.Cell>
                 <IndexTable.Cell>{resourceType}</IndexTable.Cell>
-                <IndexTable.Cell>{detail}</IndexTable.Cell>
+                <IndexTable.Cell>
+                    <Tooltip content={detail}>
+                        <Text as="span" truncate>
+                            {detail.length > 50 ? detail.substring(0, 50) + "..." : detail}
+                        </Text>
+                    </Tooltip>
+                </IndexTable.Cell>
                 <IndexTable.Cell>
                     <Badge tone={status === 'Success' ? 'success' : status === 'Failed' ? 'critical' : 'info'}>
                         {status}
@@ -262,10 +264,7 @@ export default function Activity() {
                         <IndexTable
                             resourceName={resourceName}
                             itemCount={logs.length}
-                            selectedItemsCount={
-                                allResourcesSelected ? 'All' : selectedResources.length
-                            }
-                            onSelectionChange={handleSelectionChange}
+                            selectable={false}
                             headings={[
                                 { title: 'Action' },
                                 { title: 'Resource' },

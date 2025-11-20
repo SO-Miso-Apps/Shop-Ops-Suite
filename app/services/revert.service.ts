@@ -1,8 +1,7 @@
-import { unauthenticated } from "../shopify.server";
 import { Backup } from "../models/Backup";
-import { ActivityLog } from "../models/ActivityLog";
-import { BulkOperationService } from "./bulk_operation.service";
 import { bulkQueue } from "../queues";
+import { ActivityService } from "./activity.service";
+import { BulkOperationService } from "./bulk_operation.service";
 
 export class RevertService {
     static async revertBackup(shop: string, jobId: string) {
@@ -74,7 +73,7 @@ export class RevertService {
             // Add extra context if needed
         }, { delay: 5000 });
 
-        await ActivityLog.create({
+        await ActivityService.createLog({
             shop,
             resourceType,
             resourceId: "Bulk",
