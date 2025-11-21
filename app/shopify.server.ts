@@ -73,7 +73,7 @@ const shopify = shopifyApp({
         if (!existingSettings) {
           await Settings.create({
             shop: session.shop,
-            onboardingCompleted: false,
+            setupGuideDismissed: false,
             agreedToTerms: false,
             updatedAt: new Date(),
           });

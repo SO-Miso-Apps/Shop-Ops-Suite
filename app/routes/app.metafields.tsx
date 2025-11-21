@@ -3,21 +3,30 @@ import { useActionData, useFetcher, useLoaderData, useNavigation, useSubmit } fr
 import { useAppBridge } from "@shopify/app-bridge-react";
 import {
     Banner,
+    BlockStack,
     Box,
     Button,
     Card,
+    ChoiceList,
     EmptyState,
+    InlineStack,
     Layout,
     Modal,
     Page,
+    Pagination,
+    Popover,
     ResourceList,
-    Text
+    Tabs,
+    Text,
+    TextField
 } from "@shopify/polaris";
+import { PlusIcon } from "@shopify/polaris-icons";
 import { useEffect, useState } from "react";
 import { DeleteConfirmModal } from "~/components/Tagger/DeleteConfirmModal";
 import { MetafieldFormModal } from "~/components/Metafield/MetafieldFormModal";
 import { MetafieldListItem } from "~/components/Metafield/MetafieldListItem";
 import { useMetafieldForm } from "~/hooks/useMetafieldForm";
+import { useDebounce } from "~/hooks/useDebounce";
 import type { MetafieldRule } from "~/types/metafield.types";
 import { MetafieldService } from "../services/metafield.service";
 import { authenticate } from "../shopify.server";
@@ -25,6 +34,7 @@ import { authenticate } from "../shopify.server";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { session } = await authenticate.admin(request);
     const rules = await MetafieldService.getRules(session.shop);
+    const libraryRules = await MetafieldService.getLibraryRules();
 
     const { UsageService } = await import("~/services/usage.service");
     const plan = await UsageService.getPlanType(session.shop);
@@ -36,7 +46,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         isLimitReached = count >= 5;
     }
 
-    return json({ rules, isFreePlan, isLimitReached });
+    return json({ rules, libraryRules, isFreePlan, isLimitReached });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -75,6 +85,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const id = formData.get("id") as string;
         const isEnabled = formData.get("isEnabled") === "true";
         await MetafieldService.toggleRule(id, isEnabled);
+    } else if (actionType === "importRule") {
+        const ruleData = JSON.parse(formData.get("ruleData") as string);
+        delete ruleData._id;
+        delete ruleData.id;
+        delete ruleData.shop;
+        delete ruleData.createdAt;
+        delete ruleData.updatedAt;
+        ruleData.isEnabled = false;
+        await MetafieldService.createRule(session.shop, ruleData);
     } else if (actionType === "generateRule") {
         const prompt = formData.get("prompt") as string;
         const resourceType = formData.get("resourceType") as string;
@@ -91,7 +110,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function MetafieldRules() {
-    const { rules, isLimitReached } = useLoaderData<typeof loader>();
+    const { rules, libraryRules, isLimitReached } = useLoaderData<typeof loader>();
     const actionData = useActionData<typeof action>();
     const shopify = useAppBridge();
     const submit = useSubmit();
@@ -99,10 +118,21 @@ export default function MetafieldRules() {
     const isSaving = nav.state === "submitting";
     const fetcher = useFetcher<any>();
 
+    const [selectedTab, setSelectedTab] = useState(0);
     const [modalOpen, setModalOpen] = useState(false);
     const [deleteId, setDeleteId] = useState<string | null>(null);
     const [aiPrompt, setAiPrompt] = useState("");
     const [editingRule, setEditingRule] = useState<MetafieldRule | null>(null);
+
+    // Filter and pagination state
+    const [searchQuery, setSearchQuery] = useState("");
+    const debouncedSearchQuery = useDebounce(searchQuery, 300);
+    const [resourceFilter, setResourceFilter] = useState<string[]>([]);
+    const [statusFilter, setStatusFilter] = useState<string[]>([]);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [resourcePopoverActive, setResourcePopoverActive] = useState(false);
+    const [statusPopoverActive, setStatusPopoverActive] = useState(false);
+    const itemsPerPage = 20;
 
     const {
         formData,
@@ -113,35 +143,40 @@ export default function MetafieldRules() {
         initEditForm
     } = useMetafieldForm();
 
-    // Handle action responses
-    useEffect(() => {
-        if (actionData?.status === "success") {
-            shopify.toast.show("Action completed successfully");
-            setModalOpen(false);
-        } else if ((actionData as any)?.status === "error") {
-            shopify.toast.show((actionData as any)?.message || "An error occurred", { isError: true });
-        }
-    }, [actionData, shopify]);
+    const currentRules = selectedTab === 0 ? rules : libraryRules;
 
-    // Handle AI generation response
-    useEffect(() => {
-        if (fetcher.data?.status === "success" && fetcher.data?.rule) {
-            const generatedRule = fetcher.data.rule;
-            setFormData({
-                ...formData,
-                name: generatedRule.name || formData.name,
-                conditions: generatedRule.conditions || [],
-                conditionLogic: generatedRule.conditionLogic || 'AND',
-                definition: {
-                    ...formData.definition,
-                    ...generatedRule.definition
-                }
-            });
-            shopify.toast.show("Rule generated from AI!");
-        } else if (fetcher.data?.status === "error") {
-            shopify.toast.show("Failed to generate rule from AI", { isError: true });
+    // Filter rules based on search and filters
+    const filteredRules = currentRules.filter((rule: MetafieldRule) => {
+        // Search filter
+        if (debouncedSearchQuery && !rule.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())) {
+            return false;
         }
-    }, [fetcher.data, shopify]);
+
+        // Resource type filter
+        if (resourceFilter.length > 0 && !resourceFilter.includes(rule.resourceType)) {
+            return false;
+        }
+
+        // Status filter
+        if (statusFilter.length > 0) {
+            const isActive = rule.isEnabled;
+            if (statusFilter.includes('active') && !isActive) return false;
+            if (statusFilter.includes('inactive') && isActive) return false;
+        }
+
+        return true;
+    });
+
+    // Pagination
+    const totalPages = Math.ceil(filteredRules.length / itemsPerPage);
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    const paginatedRules = filteredRules.slice(startIndex, endIndex);
+
+    // Reset to page 1 when filters change
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [debouncedSearchQuery, resourceFilter, statusFilter, selectedTab]);
 
     const handleOpenModal = (rule: MetafieldRule | null = null) => {
         setAiPrompt("");
@@ -184,6 +219,13 @@ export default function MetafieldRules() {
         submit({ actionType: "toggleRule", id, isEnabled: (!currentStatus).toString() }, { method: "post" });
     };
 
+    const handleImport = (rule: MetafieldRule) => {
+        submit(
+            { actionType: "importRule", ruleData: JSON.stringify(rule) },
+            { method: "post" }
+        );
+    };
+
     const handleGenerateAI = () => {
         if (!aiPrompt.trim()) return;
         fetcher.submit(
@@ -192,11 +234,16 @@ export default function MetafieldRules() {
         );
     };
 
+    const tabs = [
+        { id: "my-rules", content: "My Rules", accessibilityLabel: "My metafield rules" },
+        { id: "library", content: "Library", accessibilityLabel: "Library metafield rules" },
+    ];
+
     return (
         <Page
             title="Metafield Automation"
-            primaryAction={{ content: "Create Rule", onAction: () => handleOpenModal(), disabled: isLimitReached }}
-            subtitle="Automatically set metafields based on conditions"
+            subtitle="Automatically assign metafields to new resources"
+            primaryAction={selectedTab === 0 ? { content: "Create Rule", onAction: () => handleOpenModal(), icon: PlusIcon } : undefined}
         >
             <Layout>
                 <Layout.Section>
@@ -211,28 +258,139 @@ export default function MetafieldRules() {
                         </Box>
                     )}
                     <Card padding="0">
-                        {rules.length === 0 ? (
-                            <EmptyState
-                                heading="No automation rules yet"
-                                action={{ content: "Create Rule", onAction: () => handleOpenModal() }}
-                                image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-                            >
-                                <p>Create rules to automatically assign metafields when products or customers are created.</p>
-                            </EmptyState>
-                        ) : (
-                            <ResourceList
-                                resourceName={{ singular: "rule", plural: "rules" }}
-                                items={rules}
-                                renderItem={(item: MetafieldRule) => (
-                                    <MetafieldListItem
-                                        rule={item}
-                                        onEdit={handleOpenModal}
-                                        onToggle={handleToggle}
-                                        onDelete={handleDelete}
+                        <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
+                            <Box padding="400" borderBlockEndWidth="025" borderColor="border">
+                                <BlockStack gap="300">
+                                    <TextField
+                                        label="Search rules"
+                                        value={searchQuery}
+                                        onChange={setSearchQuery}
+                                        placeholder="Search by rule name..."
+                                        autoComplete="off"
+                                        clearButton
+                                        onClearButtonClick={() => setSearchQuery("")}
                                     />
-                                )}
-                            />
-                        )}
+                                    <InlineStack gap="200">
+                                        <Popover
+                                            active={resourcePopoverActive}
+                                            activator={
+                                                <Button
+                                                    onClick={() => setResourcePopoverActive(!resourcePopoverActive)}
+                                                    disclosure={resourcePopoverActive ? 'up' : 'down'}
+                                                >
+                                                    Resource: {resourceFilter.length > 0 ? resourceFilter.join(', ') : 'All'}
+                                                </Button>
+                                            }
+                                            onClose={() => setResourcePopoverActive(false)}
+                                        >
+                                            <Box padding="400">
+                                                <ChoiceList
+                                                    title="Resource Type"
+                                                    choices={[
+                                                        { label: 'Products', value: 'products' },
+                                                        { label: 'Customers', value: 'customers' },
+                                                    ]}
+                                                    selected={resourceFilter}
+                                                    onChange={(value) => setResourceFilter(value)}
+                                                    allowMultiple
+                                                />
+                                            </Box>
+                                        </Popover>
+                                        {selectedTab === 0 && (
+                                            <Popover
+                                                active={statusPopoverActive}
+                                                activator={
+                                                    <Button
+                                                        onClick={() => setStatusPopoverActive(!statusPopoverActive)}
+                                                        disclosure={statusPopoverActive ? 'up' : 'down'}
+                                                    >
+                                                        Status: {statusFilter.length > 0 ? statusFilter.join(', ') : 'All'}
+                                                    </Button>
+                                                }
+                                                onClose={() => setStatusPopoverActive(false)}
+                                            >
+                                                <Box padding="400">
+                                                    <ChoiceList
+                                                        title="Status"
+                                                        choices={[
+                                                            { label: 'Active', value: 'active' },
+                                                            { label: 'Inactive', value: 'inactive' },
+                                                        ]}
+                                                        selected={statusFilter}
+                                                        onChange={(value) => setStatusFilter(value)}
+                                                        allowMultiple
+                                                    />
+                                                </Box>
+                                            </Popover>
+                                        )}
+                                        {(searchQuery || resourceFilter.length > 0 || statusFilter.length > 0) && (
+                                            <Button
+                                                onClick={() => {
+                                                    setSearchQuery("");
+                                                    setResourceFilter([]);
+                                                    setStatusFilter([]);
+                                                }}
+                                            >
+                                                Clear filters
+                                            </Button>
+                                        )}
+                                    </InlineStack>
+                                </BlockStack>
+                            </Box>
+                            {currentRules.length === 0 ? (
+                                <Box padding="400">
+                                    <EmptyState
+                                        heading={selectedTab === 0 ? "No automation rules yet" : "No library rules available"}
+                                        action={selectedTab === 0 ? { content: "Create Rule", onAction: () => handleOpenModal() } : undefined}
+                                        image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                                    >
+                                        <p>
+                                            {selectedTab === 0
+                                                ? "Create rules to automatically assign metafields when products or customers are created."
+                                                : "Library rules are predefined examples you can import."}
+                                        </p>
+                                    </EmptyState>
+                                </Box>
+                            ) : (
+                                <>
+                                    <ResourceList
+                                        resourceName={{ singular: "rule", plural: "rules" }}
+                                        items={paginatedRules}
+                                        emptyState={
+                                            <EmptyState
+                                                heading={filteredRules.length === 0 && (searchQuery || resourceFilter.length > 0 || statusFilter.length > 0) ? "No rules match your filters" : "No rules found"}
+                                                action={selectedTab === 0 && filteredRules.length === 0 && !searchQuery && resourceFilter.length === 0 && statusFilter.length === 0 ? { content: "Create Rule", onAction: () => handleOpenModal() } : undefined}
+                                                image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
+                                            >
+                                                <p>{filteredRules.length === 0 && (searchQuery || resourceFilter.length > 0 || statusFilter.length > 0) ? "Try adjusting your search or filters." : "Create a rule to start automating metafields."}</p>
+                                            </EmptyState>
+                                        }
+                                        renderItem={(item: MetafieldRule) => (
+                                            <MetafieldListItem
+                                                rule={item}
+                                                onEdit={selectedTab === 0 ? handleOpenModal : undefined}
+                                                onToggle={selectedTab === 0 ? handleToggle : undefined}
+                                                onDelete={selectedTab === 0 ? handleDelete : undefined}
+                                                onImport={selectedTab === 1 ? handleImport : undefined}
+                                            />
+                                        )}
+                                    />
+                                    {totalPages > 1 && (
+                                        <Box padding="400" borderBlockStartWidth="025" borderColor="border">
+                                            <InlineStack align="center">
+                                                <Pagination
+                                                    hasPrevious={currentPage > 1}
+                                                    onPrevious={() => setCurrentPage(currentPage - 1)}
+                                                    hasNext={currentPage < totalPages}
+                                                    onNext={() => setCurrentPage(currentPage + 1)}
+                                                    label={`Page ${currentPage} of ${totalPages} (${filteredRules.length} rules)`}
+                                                />
+                                            </InlineStack>
+                                        </Box>
+                                    )}
+                                </>
+                            )}
+                        </Tabs>
                     </Card>
                 </Layout.Section>
             </Layout>

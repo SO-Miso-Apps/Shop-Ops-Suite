@@ -3,14 +3,21 @@ import { useActionData, useFetcher, useLoaderData, useNavigation } from "@remix-
 import { useAppBridge } from "@shopify/app-bridge-react";
 import {
 	Banner,
+	BlockStack,
 	Box,
+	Button,
 	Card,
+	ChoiceList,
 	EmptyState,
+	InlineStack,
 	Layout,
 	Page,
+	Pagination,
+	Popover,
 	ResourceList,
 	Tabs,
-	Text
+	Text,
+	TextField
 } from "@shopify/polaris";
 import { PlusIcon } from "@shopify/polaris-icons";
 import { useCallback, useEffect, useState } from "react";
@@ -18,6 +25,7 @@ import { DeleteConfirmModal } from "~/components/Tagger/DeleteConfirmModal";
 import { RuleFormModal } from "~/components/Tagger/RuleFormModal";
 import { RuleListItem } from "~/components/Tagger/RuleListItem";
 import { useTaggerForm } from "~/hooks/useTaggerForm";
+import { useDebounce } from "~/hooks/useDebounce";
 import type { TaggingRule } from "~/types/tagger.types";
 import { AIService } from "../services/ai.service";
 import { TaggerService } from "../services/tagger.service";
@@ -113,6 +121,16 @@ export default function SmartTagger() {
 	const [editingRule, setEditingRule] = useState<TaggingRule | null>(null);
 	const [deleteId, setDeleteId] = useState<string | null>(null);
 
+	// Filter and pagination state
+	const [searchQuery, setSearchQuery] = useState("");
+	const debouncedSearchQuery = useDebounce(searchQuery, 300);
+	const [resourceFilter, setResourceFilter] = useState<string[]>([]);
+	const [statusFilter, setStatusFilter] = useState<string[]>([]);
+	const [currentPage, setCurrentPage] = useState(1);
+	const [resourcePopoverActive, setResourcePopoverActive] = useState(false);
+	const [statusPopoverActive, setStatusPopoverActive] = useState(false);
+	const itemsPerPage = 20;
+
 	const {
 		formData,
 		setFormData,
@@ -147,9 +165,44 @@ export default function SmartTagger() {
 	const handleTabChange = useCallback((selectedTabIndex: number) => setSelectedTab(selectedTabIndex), []);
 
 	const tabs = [
-		{ id: "my-rules", content: "My Rules" },
-		{ id: "library", content: "Library" },
+		{ id: "my-rules", content: "My Rules", accessibilityLabel: "My tagging rules" },
+		{ id: "library", content: "Library", accessibilityLabel: "Library tagging rules" },
 	];
+
+	const currentRules = selectedTab === 0 ? rules : libraryRules;
+
+	// Filter rules based on search and filters
+	const filteredRules = currentRules.filter((rule: TaggingRule) => {
+		// Search filter
+		if (debouncedSearchQuery && !rule.name.toLowerCase().includes(debouncedSearchQuery.toLowerCase())) {
+			return false;
+		}
+
+		// Resource type filter
+		if (resourceFilter.length > 0 && !resourceFilter.includes(rule.resourceType)) {
+			return false;
+		}
+
+		// Status filter
+		if (statusFilter.length > 0) {
+			const isActive = rule.isEnabled;
+			if (statusFilter.includes('active') && !isActive) return false;
+			if (statusFilter.includes('inactive') && isActive) return false;
+		}
+
+		return true;
+	});
+
+	// Pagination
+	const totalPages = Math.ceil(filteredRules.length / itemsPerPage);
+	const startIndex = (currentPage - 1) * itemsPerPage;
+	const endIndex = startIndex + itemsPerPage;
+	const paginatedRules = filteredRules.slice(startIndex, endIndex);
+
+	// Reset to page 1 when filters change
+	useEffect(() => {
+		setCurrentPage(1);
+	}, [debouncedSearchQuery, resourceFilter, statusFilter, selectedTab]);
 
 	const handleEdit = (rule: TaggingRule) => {
 		setEditingRule(rule);
@@ -214,16 +267,94 @@ export default function SmartTagger() {
 
 					<Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange}>
 						<Card padding="0">
+							<Box padding="400" borderBlockEndWidth="025" borderColor="border">
+								<BlockStack gap="300">
+									<TextField
+										label="Search rules"
+										value={searchQuery}
+										onChange={setSearchQuery}
+										placeholder="Search by rule name..."
+										autoComplete="off"
+										clearButton
+										onClearButtonClick={() => setSearchQuery("")}
+									/>
+									<InlineStack gap="200">
+										<Popover
+											active={resourcePopoverActive}
+											activator={
+												<Button
+													onClick={() => setResourcePopoverActive(!resourcePopoverActive)}
+													disclosure={resourcePopoverActive ? 'up' : 'down'}
+												>
+													Resource: {resourceFilter.length > 0 ? resourceFilter.join(', ') : 'All'}
+												</Button>
+											}
+											onClose={() => setResourcePopoverActive(false)}
+										>
+											<Box padding="400">
+												<ChoiceList
+													title="Resource Type"
+													choices={[
+														{ label: 'Orders', value: 'orders' },
+														{ label: 'Customers', value: 'customers' },
+													]}
+													selected={resourceFilter}
+													onChange={(value) => setResourceFilter(value)}
+													allowMultiple
+												/>
+											</Box>
+										</Popover>
+										{selectedTab === 0 && (
+											<Popover
+												active={statusPopoverActive}
+												activator={
+													<Button
+														onClick={() => setStatusPopoverActive(!statusPopoverActive)}
+														disclosure={statusPopoverActive ? 'up' : 'down'}
+													>
+														Status: {statusFilter.length > 0 ? statusFilter.join(', ') : 'All'}
+													</Button>
+												}
+												onClose={() => setStatusPopoverActive(false)}
+											>
+												<Box padding="400">
+													<ChoiceList
+														title="Status"
+														choices={[
+															{ label: 'Active', value: 'active' },
+															{ label: 'Inactive', value: 'inactive' },
+														]}
+														selected={statusFilter}
+														onChange={(value) => setStatusFilter(value)}
+														allowMultiple
+													/>
+												</Box>
+											</Popover>
+										)}
+										{(searchQuery || resourceFilter.length > 0 || statusFilter.length > 0) && (
+											<Button
+												onClick={() => {
+													setSearchQuery("");
+													setResourceFilter([]);
+													setStatusFilter([]);
+												}}
+											>
+												Clear filters
+											</Button>
+										)}
+									</InlineStack>
+								</BlockStack>
+							</Box>
 							<ResourceList
 								resourceName={{ singular: "rule", plural: "rules" }}
-								items={selectedTab === 0 ? rules : libraryRules}
+								items={paginatedRules}
 								emptyState={
 									<EmptyState
-										heading="No rules found"
-										action={selectedTab === 0 ? { content: "Create Rule", onAction: handleCreate } : undefined}
+										heading={filteredRules.length === 0 && (searchQuery || resourceFilter.length > 0 || statusFilter.length > 0) ? "No rules match your filters" : "No rules found"}
+										action={selectedTab === 0 && filteredRules.length === 0 && !searchQuery && resourceFilter.length === 0 && statusFilter.length === 0 ? { content: "Create Rule", onAction: handleCreate } : undefined}
 										image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
 									>
-										<p>Create a rule to start automating tags.</p>
+										<p>{filteredRules.length === 0 && (searchQuery || resourceFilter.length > 0 || statusFilter.length > 0) ? "Try adjusting your search or filters." : "Create a rule to start automating tags."}</p>
 									</EmptyState>
 								}
 								renderItem={(item: TaggingRule) => (
@@ -237,6 +368,19 @@ export default function SmartTagger() {
 									/>
 								)}
 							/>
+							{totalPages > 1 && (
+								<Box padding="400" borderBlockStartWidth="025" borderColor="border">
+									<InlineStack align="center">
+										<Pagination
+											hasPrevious={currentPage > 1}
+											onPrevious={() => setCurrentPage(currentPage - 1)}
+											hasNext={currentPage < totalPages}
+											onNext={() => setCurrentPage(currentPage + 1)}
+											label={`Page ${currentPage} of ${totalPages} (${filteredRules.length} rules)`}
+										/>
+									</InlineStack>
+								</Box>
+							)}
 						</Card>
 					</Tabs>
 				</Layout.Section>

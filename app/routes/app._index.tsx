@@ -15,27 +15,40 @@ import { useEffect, useState } from "react";
 import { DashboardService } from "../services/dashboard.service";
 import { authenticate } from "../shopify.server";
 
+import { SetupGuide, SetupStep } from "../components/Dashboard/SetupGuide";
 import { Settings } from "../models/Settings";
+import { ActionFunctionArgs } from "@remix-run/node";
+import { useSubmit } from "@remix-run/react";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session, redirect } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
+  const dashboardData = await DashboardService.getDashboardData(admin, session.shop);
+  const setupProgress = await DashboardService.getSetupProgress(session.shop);
 
-  // Check Onboarding Status
-  const settings = await Settings.findOne({ shop: session.shop });
-  if (!settings || !settings.onboardingCompleted) {
-    console.log("redirecting to onboarding");
-    return redirect("/app/onboarding");
+  return json({ ...dashboardData, setupProgress });
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const action = formData.get("action");
+
+  if (action === "dismiss_setup_guide") {
+    await Settings.findOneAndUpdate(
+      { shop: session.shop },
+      { setupGuideDismissed: true },
+      { upsert: true }
+    );
+    return json({ success: true });
   }
 
-  const { admin } = await authenticate.admin(request);
-  const dashboardData = await DashboardService.getDashboardData(admin, session.shop);
-
-  return json(dashboardData);
+  return null;
 };
 
 export default function Dashboard() {
-  const { stats, suggestions, charts } = useLoaderData<typeof loader>();
+  const { stats, suggestions, charts, setupProgress } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const submit = useSubmit();
   const [isClient, setIsClient] = useState(false);
   const [ChartsModule, setChartsModule] = useState<any>(null);
 
@@ -69,6 +82,20 @@ export default function Dashboard() {
   return (
     <Page title="Dashboard" subtitle="Shop-Ops Suite Overview">
       <BlockStack gap="500">
+        {/* Setup Guide */}
+        {setupProgress && !setupProgress.dismissed && (
+          <Layout.Section>
+            <SetupGuide
+              steps={setupProgress.steps}
+              onDismiss={() => {
+                const formData = new FormData();
+                formData.append("action", "dismiss_setup_guide");
+                submit(formData, { method: "post" });
+              }}
+            />
+          </Layout.Section>
+        )}
+
         {/* Top Stats Row */}
         <Layout>
           <Layout.Section>

@@ -171,6 +171,73 @@ export class DashboardService {
         };
     }
 
+    static async getSetupProgress(shop: string) {
+        const { TaggingRule } = await import("../models/TaggingRule");
+        const { ActivityLog } = await import("../models/ActivityLog");
+        const { Settings } = await import("../models/Settings");
+
+        // 1. Check if Smart Tag Rule exists
+        const hasTaggingRule = await TaggingRule.exists({ shop });
+
+        // 2. Check if Bulk Operation has been run
+        const hasBulkOperation = await ActivityLog.exists({
+            shop,
+            action: { $regex: /bulk/i }
+        });
+
+        // 3. Check if COGS has been updated
+        const hasCogsUpdate = await ActivityLog.exists({
+            shop,
+            action: { $regex: /cost|cogs/i }
+        });
+
+        // 4. Check if Metafield Definition exists
+        const hasMetafieldDefinition = await ActivityLog.exists({
+            shop,
+            action: { $regex: /metafield/i }
+        });
+
+        const settings = await Settings.findOne({ shop });
+
+        return {
+            dismissed: settings?.setupGuideDismissed || false,
+            steps: [
+                {
+                    id: "create_rule",
+                    title: "Create your first Smart Tag Rule",
+                    description: "Automatically tag products based on conditions.",
+                    action: "Create Rule",
+                    url: "/app/tagger",
+                    completed: !!hasTaggingRule
+                },
+                {
+                    id: "update_cogs",
+                    title: "Add Product Costs",
+                    description: "Track your profit margins by adding COGS.",
+                    action: "Update Costs",
+                    url: "/app/cogs",
+                    completed: !!hasCogsUpdate
+                },
+                {
+                    id: "run_bulk",
+                    title: "Run a Bulk Operation",
+                    description: "Edit products in bulk to save time.",
+                    action: "Bulk Edit",
+                    url: "/app/bulk",
+                    completed: !!hasBulkOperation
+                },
+                {
+                    id: "metafield_def",
+                    title: "Manage Metafields",
+                    description: "Create custom fields for your products.",
+                    action: "Manage Metafields",
+                    url: "/app/metafields",
+                    completed: !!hasMetafieldDefinition
+                }
+            ]
+        };
+    }
+
     private static async getActivityTrend(shop: string, days: number) {
         const { ActivityLog } = await import("../models/ActivityLog");
         const startDate = new Date();

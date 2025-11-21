@@ -3,33 +3,54 @@ import type { MetafieldRule } from "~/types/metafield.types";
 
 interface MetafieldListItemProps {
   rule: MetafieldRule;
-  onEdit: (rule: MetafieldRule) => void;
-  onToggle: (id: string, currentStatus: boolean) => void;
-  onDelete: (id: string) => void;
+  onEdit?: (rule: MetafieldRule) => void;
+  onToggle?: (id: string, currentStatus: boolean) => void;
+  onDelete?: (id: string) => void;
+  onImport?: (rule: MetafieldRule) => void;
 }
 
 export function MetafieldListItem({
   rule,
   onEdit,
   onToggle,
-  onDelete
+  onDelete,
+  onImport
 }: MetafieldListItemProps) {
+  const shortcutActions = [];
+
+  if (onToggle && rule._id) {
+    shortcutActions.push({
+      content: rule.isEnabled ? 'Turn Off' : 'Turn On',
+      onAction: () => onToggle(rule._id!, rule.isEnabled),
+    });
+  }
+
+  if (onDelete && rule._id) {
+    shortcutActions.push({
+      content: 'Delete',
+      onAction: () => onDelete(rule._id!),
+    });
+  }
+
+  if (onImport) {
+    shortcutActions.push({
+      content: 'Import to My Rules',
+      onAction: () => onImport(rule),
+    });
+  }
+
+  const props: any = {
+    id: rule._id || rule.id || '',
+    accessibilityLabel: `${onEdit ? 'Edit' : 'View'} ${rule.name}`,
+    shortcutActions
+  };
+
+  if (onEdit) {
+    props.onClick = () => onEdit(rule);
+  }
+
   return (
-    <ResourceItem
-      id={rule._id || ''}
-      accessibilityLabel={`Edit ${rule.name}`}
-      onClick={() => onEdit(rule)}
-      shortcutActions={[
-        {
-          content: rule.isEnabled ? 'Turn Off' : 'Turn On',
-          onAction: () => onToggle(rule._id!, rule.isEnabled),
-        },
-        {
-          content: 'Delete',
-          onAction: () => onDelete(rule._id!),
-        }
-      ]}
-    >
+    <ResourceItem {...props}>
       <InlineStack align="space-between" blockAlign="center">
         <BlockStack gap="200">
           <InlineStack gap="200" blockAlign="center">

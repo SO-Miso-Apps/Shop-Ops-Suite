@@ -9,6 +9,7 @@ export interface MetafieldDefinition {
 
 export interface MetafieldRule {
   _id?: string;
+  id?: string; // For library rules
   name: string;
   resourceType: 'products' | 'customers';
   conditions: Condition[];

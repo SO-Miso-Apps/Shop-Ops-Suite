@@ -9,6 +9,12 @@ export class MetafieldService {
         return await MetafieldRule.countDocuments({ shop });
     }
 
+    static async getLibraryRules() {
+        const shopAdmin = process.env.SHOP_ADMIN;
+        if (!shopAdmin) return [];
+        return await MetafieldRule.find({ shop: shopAdmin, isEnabled: true });
+    }
+
     static async createRule(shop: string, data: any) {
         await MetafieldService.checkForDuplicate(shop, data);
         return await MetafieldRule.create({
