@@ -57,13 +57,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-	const { admin } = await authenticate.admin(request);
+	const { admin, session } = await authenticate.admin(request);
 	const formData = await request.formData();
 	const actionType = formData.get("actionType");
 
 	if (actionType === "bulkUpdate") {
 		const updates = JSON.parse(formData.get("updates") as string);
-		const errors = await CogsService.updateProductCosts(admin, updates);
+		const errors = await CogsService.updateProductCosts(admin, session.shop, updates);
 
 		if (errors.length > 0) {
 			return json({ status: "error", errors }, { status: 422 });

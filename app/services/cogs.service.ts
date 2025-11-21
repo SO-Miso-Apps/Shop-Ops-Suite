@@ -1,4 +1,5 @@
 import { ProductQuery, InventoryItemUpdateMutation } from "~/graphql/products";
+import { ActivityService } from "./activity.service";
 
 export class CogsService {
     static async getProductsWithCosts(admin: any, paginationArgs: any) {
@@ -29,7 +30,7 @@ export class CogsService {
         };
     }
 
-    static async updateProductCosts(admin: any, updates: any[]) {
+    static async updateProductCosts(admin: any, shop: string, updates: any[]) {
         const errors: any[] = [];
 
         // Execute sequentially to be safe with rate limits for now
@@ -52,6 +53,17 @@ export class CogsService {
                 console.error("Failed to update inventory item", update.inventoryItemId, e);
                 errors.push({ message: `Failed to update ${update.inventoryItemId}` });
             }
+        }
+
+        if (updates.length > 0 && errors.length === 0) {
+            await ActivityService.createLog({
+                shop,
+                resourceType: "Product",
+                resourceId: "Bulk", // or use the first item ID?
+                action: "Updated Product Costs",
+                detail: `Updated costs for ${updates.length} variants`,
+                status: "Success"
+            });
         }
 
         return errors;

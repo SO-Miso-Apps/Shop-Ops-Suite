@@ -1,4 +1,5 @@
 import { MetafieldRule } from "../models/MetafieldRule";
+import { ActivityService } from "./activity.service";
 
 export class MetafieldService {
     static async getRules(shop: string) {
@@ -17,10 +18,19 @@ export class MetafieldService {
 
     static async createRule(shop: string, data: any) {
         await MetafieldService.checkForDuplicate(shop, data);
-        return await MetafieldRule.create({
+        const rule = await MetafieldRule.create({
             shop,
             ...data
         });
+        await ActivityService.createLog({
+            shop,
+            resourceType: "Metafield Rule",
+            resourceId: rule.id,
+            action: "Created Metafield Rule",
+            detail: `Created rule for ${data.definition.namespace}.${data.definition.key}`,
+            status: "Success"
+        });
+        return rule;
     }
 
     static async updateRule(id: string, data: any) {
@@ -28,6 +38,14 @@ export class MetafieldService {
         const rule = await MetafieldRule.findById(id);
         if (rule) {
             await MetafieldService.checkForDuplicate(rule.shop, data, id);
+            await ActivityService.createLog({
+                shop: rule.shop,
+                resourceType: "Metafield Rule",
+                resourceId: id,
+                action: "Updated Metafield Rule",
+                detail: `Updated rule for ${data.definition.namespace}.${data.definition.key}`,
+                status: "Success"
+            });
         }
         return await MetafieldRule.findByIdAndUpdate(id, {
             ...data,
@@ -55,10 +73,32 @@ export class MetafieldService {
     }
 
     static async deleteRule(id: string) {
+        const rule = await MetafieldRule.findById(id);
+        if (rule) {
+            await ActivityService.createLog({
+                shop: rule.shop,
+                resourceType: "Metafield Rule",
+                resourceId: id,
+                action: "Deleted Metafield Rule",
+                detail: `Deleted rule for ${rule.definition.namespace}.${rule.definition.key}`,
+                status: "Success"
+            });
+        }
         return await MetafieldRule.findByIdAndDelete(id);
     }
 
     static async toggleRule(id: string, isEnabled: boolean) {
+        const rule = await MetafieldRule.findById(id);
+        if (rule) {
+            await ActivityService.createLog({
+                shop: rule.shop,
+                resourceType: "Metafield Rule",
+                resourceId: id,
+                action: isEnabled ? "Enabled Metafield Rule" : "Disabled Metafield Rule",
+                detail: `${isEnabled ? "Enabled" : "Disabled"} rule for ${rule.definition.namespace}.${rule.definition.key}`,
+                status: "Success"
+            });
+        }
         return await MetafieldRule.findByIdAndUpdate(id, { isEnabled });
     }
 }
