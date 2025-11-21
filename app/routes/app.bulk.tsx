@@ -1,54 +1,45 @@
-import { useEffect, useState, useCallback } from "react";
 import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useActionData, Link } from "@remix-run/react";
+import { Link, useActionData, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
 import {
-	Page,
-	Layout,
-	Card,
-	FormLayout,
-	TextField,
-	Select,
-	Button,
-	BlockStack,
 	Banner,
-	Text,
-	Modal,
-	List,
-	InlineStack,
-	ProgressBar,
+	BlockStack,
 	Box,
-	Autocomplete,
-	Icon,
+	Layout,
+	Page,
+	ProgressBar,
+	Text
 } from "@shopify/polaris";
-import { authenticate } from "../shopify.server";
+import { useEffect, useState } from "react";
+import { BulkOperationForm } from "~/components/Bulk/BulkOperationForm";
+import { BulkPreviewModal } from "~/components/Bulk/BulkPreviewModal";
+import { useBulkForm } from "~/hooks/useBulkForm";
+import type { BulkActionData } from "~/types/bulk.types";
+import { generateJobId } from "~/utils/id-generator";
 import { bulkQueue } from "../queue.server";
 import { dryRunTagOperation } from "../services/bulk.server";
 import { UsageService } from "../services/usage.service";
-import { getPlan } from "~/utils/get-plan";
-import { generateJobId } from "~/utils/id-generator";
+import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: { request: Request }) => {
 	const { session, admin } = await authenticate.admin(request);
 
-	// Get current usage stats
 	const usage = await UsageService.getCurrentUsage(session.shop);
 	const plan = await UsageService.getPlanType(session.shop);
 	const limit = plan === "Free" ? 500 : null;
 
-	// Fetch existing tags from products (simplified approach for quick loading)
 	const tagsSet = new Set<string>();
 	try {
 		const response = await admin.graphql(`
-            query {
-                products(first: 250) {
-                    edges {
-                        node {
-                            tags
-                        }
-                    }
-                }
-            }
-        `);
+			query {
+				products(first: 250) {
+					edges {
+						node {
+							tags
+						}
+					}
+				}
+			}
+		`);
 		const data = await response.json();
 		data.data.products.edges.forEach((edge: any) => {
 			edge.node.tags.forEach((tag: string) => tagsSet.add(tag));
@@ -106,7 +97,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 		const operation = formData.get("operation") as string;
 		const affectedCount = parseInt(formData.get("affectedCount") as string);
 
-		// Check quota
 		const quotaCheck = await UsageService.checkQuota(session.shop, affectedCount);
 		if (!quotaCheck.allowed) {
 			return json({
@@ -117,7 +107,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 			});
 		}
 
-		// Push to Bulk Queue
 		const jobId = generateJobId();
 		await bulkQueue.add("bulk-tag-update", {
 			shop: session.shop,
@@ -136,18 +125,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function BulkOperations() {
 	const loaderData = useLoaderData<typeof loader>();
-	const actionData = useActionData<typeof action>() as {
-		status?: "queued" | "preview" | "quota_exceeded" | "error";
-		count?: number;
-		preview?: Array<{ id: string; title?: string; tags: string[] }>;
-		resourceType?: string;
-		operation?: string;
-		findTag?: string;
-		replaceTag?: string;
-		message?: string;
-		current?: number;
-		limit?: number | null;
-	};
+	const actionData = useActionData<typeof action>() as BulkActionData;
 	const submit = useSubmit();
 	const nav = useNavigation();
 	const isLoading = nav.state === "submitting";
@@ -156,26 +134,25 @@ export default function BulkOperations() {
 	const isQuotaExceeded = actionData?.status === "quota_exceeded";
 
 	const [isShowUpgradeBanner, setShowUpgradeBanner] = useState(true);
-	const [formState, setFormState] = useState({
-		resourceType: "products",
-		operation: "replace",
-		findTag: "",
-		replaceTag: "",
-	});
 
-	const [showPreviewModal, setShowPreviewModal] = useState(false);
-
-	// Autocomplete state for Find Tag
-	const [findTagInputValue, setFindTagInputValue] = useState("");
-	const [findTagOptions, setFindTagOptions] = useState<Array<{ value: string; label: string }>>([]);
+	const {
+		formState,
+		updateFormState,
+		showPreviewModal,
+		openPreviewModal,
+		closePreviewModal,
+		findTagInputValue,
+		setFindTagInputValue,
+		findTagOptions,
+		setFindTagOptions
+	} = useBulkForm();
 
 	useEffect(() => {
 		if (isPreview) {
-			setShowPreviewModal(true);
+			openPreviewModal();
 		}
-	}, [isPreview]);
+	}, [isPreview, openPreviewModal]);
 
-	// Debounced autocomplete filtering
 	useEffect(() => {
 		const timeoutId = setTimeout(() => {
 			if (findTagInputValue === "") {
@@ -196,10 +173,10 @@ export default function BulkOperations() {
 					}));
 				setFindTagOptions(resultOptions);
 			}
-		}, 300); // 300ms debounce delay
+		}, 300);
 
 		return () => clearTimeout(timeoutId);
-	}, [findTagInputValue, loaderData.existingTags]);
+	}, [findTagInputValue, loaderData.existingTags, setFindTagOptions]);
 
 	const handleDryRun = () => {
 		const formDataObj = { ...formState, actionType: "dryRun" };
@@ -213,7 +190,13 @@ export default function BulkOperations() {
 			affectedCount: actionData?.count?.toString() || "0",
 		};
 		submit(formDataObj, { method: "post" });
-		setShowPreviewModal(false);
+		closePreviewModal();
+	};
+
+	const handleSelectTag = (selected: string[]) => {
+		const selectedTag = selected[0];
+		updateFormState({ findTag: selectedTag });
+		setFindTagInputValue(selectedTag);
 	};
 
 	const usagePercent = loaderData.limit
@@ -224,7 +207,6 @@ export default function BulkOperations() {
 		<Page title="Bulk Operations">
 			<Layout>
 				<Layout.Section>
-					{/* Usage Banner */}
 					{loaderData.plan === "Free" && isShowUpgradeBanner && (
 						<Banner
 							tone={usagePercent >= 90 ? "warning" : "info"}
@@ -241,152 +223,31 @@ export default function BulkOperations() {
 							</BlockStack>
 						</Banner>
 					)}
-
 				</Layout.Section>
 				<Layout.Section>
-					<Card>
-						<BlockStack gap="400">
-							<Text variant="headingMd" as="h2">Find & Replace Tags</Text>
-							<Text as="p">
-								Mass update tags across your store. This operation runs in the background.
-							</Text>
-
-							{isQueued && (
-								<Banner tone="success" onDismiss={() => window.location.reload()}>
-									Bulk operation started! Check Activity Log for progress.
-								</Banner>
-							)}
-
-							{isQuotaExceeded && (
-								<Banner tone="critical">
-									<BlockStack gap="200">
-										<Text as="p">{actionData.message}</Text>
-										<Button url="/app/billing">Upgrade to Pro</Button>
-									</BlockStack>
-								</Banner>
-							)}
-
-							{actionData?.status === "error" && (
-								<Banner tone="critical">
-									Error: {actionData.message}
-								</Banner>
-							)}
-
-							<FormLayout>
-								<Select
-									label="Resource"
-									options={[
-										{ label: "Products", value: "products" },
-										{ label: "Customers", value: "customers" },
-										{ label: "Orders", value: "orders" },
-									]}
-									value={formState.resourceType}
-									onChange={(value) => setFormState({ ...formState, resourceType: value })}
-								/>
-
-								<Select
-									label="Operation"
-									options={[
-										{ label: "Find & Replace", value: "replace" },
-										{ label: "Add Tag", value: "add" },
-										{ label: "Remove Tag", value: "remove" },
-									]}
-									value={formState.operation}
-									onChange={(value) => setFormState({ ...formState, operation: value })}
-								/>
-
-								<Autocomplete
-									options={findTagOptions}
-									selected={[]}
-									onSelect={(selected) => {
-										const selectedTag = selected[0];
-										setFormState({ ...formState, findTag: selectedTag });
-										setFindTagInputValue(selectedTag);
-									}}
-									textField={
-										<Autocomplete.TextField
-											label={formState.operation === "add" ? "Tag to Add" : "Find Tag"}
-											value={findTagInputValue}
-											onChange={(value) => {
-												setFindTagInputValue(value);
-												setFormState({ ...formState, findTag: value });
-											}}
-											autoComplete="off"
-											helpText={formState.operation === "replace" ? "The tag you want to change. Start typing to see suggestions." : "Start typing to see existing tags."}
-										/>
-									}
-								/>
-
-								{formState.operation === "replace" && (
-									<TextField
-										label="Replace With"
-										value={formState.replaceTag}
-										onChange={(value) => setFormState({ ...formState, replaceTag: value })}
-										autoComplete="off"
-										helpText="The new tag value."
-									/>
-								)}
-
-								<Button
-									variant="primary"
-									onClick={handleDryRun}
-									loading={isLoading}
-									disabled={!formState.findTag}
-								>
-									Preview Operation
-								</Button>
-							</FormLayout>
-						</BlockStack>
-					</Card>
+					<BulkOperationForm
+						formState={formState}
+						onFormChange={updateFormState}
+						onPreview={handleDryRun}
+						isLoading={isLoading}
+						isQueued={isQueued}
+						isQuotaExceeded={isQuotaExceeded}
+						actionData={actionData}
+						findTagInputValue={findTagInputValue}
+						onFindTagInputChange={setFindTagInputValue}
+						findTagOptions={findTagOptions}
+						onSelectTag={handleSelectTag}
+					/>
 				</Layout.Section>
 			</Layout>
 
-			{/* Preview Modal */}
-			<Modal
+			<BulkPreviewModal
 				open={showPreviewModal}
-				onClose={() => setShowPreviewModal(false)}
-				title="Confirm Bulk Operation"
-				primaryAction={{
-					content: `Update ${actionData?.count || 0} Items`,
-					onAction: handleExecute,
-					loading: isLoading,
-				}}
-				secondaryActions={[
-					{
-						content: "Cancel",
-						onAction: () => setShowPreviewModal(false),
-					},
-				]}
-			>
-				<Modal.Section>
-					<BlockStack gap="400">
-						<Text as="p">
-							Found <strong>{actionData?.count || 0}</strong> {actionData?.resourceType} that will be affected by this operation.
-						</Text>
-
-						{actionData?.preview && actionData.preview.length > 0 && (
-							<BlockStack gap="200">
-								<Text variant="headingSm" as="h3">Preview (first 10 items):</Text>
-								<Box padding="400" background="bg-surface-secondary" borderRadius="200">
-									<List>
-										{actionData.preview.map((item: any) => (
-											<List.Item key={item.id}>
-												<strong>{item.title}</strong>
-												<br />
-												<Text as="span" tone="subdued">Tags: {item.tags.join(", ")}</Text>
-											</List.Item>
-										))}
-									</List>
-								</Box>
-							</BlockStack>
-						)}
-
-						<Banner tone="warning">
-							This operation will run in the background and cannot be undone (except via Backup/Revert for Pro users).
-						</Banner>
-					</BlockStack>
-				</Modal.Section>
-			</Modal>
+				onClose={closePreviewModal}
+				onConfirm={handleExecute}
+				isLoading={isLoading}
+				actionData={actionData}
+			/>
 		</Page>
 	);
 }
