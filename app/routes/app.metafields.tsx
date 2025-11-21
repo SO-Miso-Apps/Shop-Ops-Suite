@@ -143,6 +143,24 @@ export default function MetafieldRules() {
         initEditForm
     } = useMetafieldForm();
 
+    // Handle AI generation response
+    useEffect(() => {
+        if (fetcher.data?.status === "success" && fetcher.data?.rule) {
+            const rule = fetcher.data.rule;
+            setFormData({
+                ...formData,
+                name: rule.name || formData.name,
+                resourceType: rule.resourceType || formData.resourceType,
+                conditionLogic: rule.conditionLogic || 'AND',
+                conditions: rule.conditions || [],
+                definition: rule.definition || formData.definition
+            });
+            shopify.toast.show("Rule generated!");
+        } else if (fetcher.data?.status === "error") {
+            shopify.toast.show(fetcher.data.message || "Failed to generate rule", { isError: true });
+        }
+    }, [fetcher.data, shopify]);
+
     const currentRules = selectedTab === 0 ? rules : libraryRules;
 
     // Filter rules based on search and filters

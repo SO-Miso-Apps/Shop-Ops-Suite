@@ -148,6 +148,7 @@ export default function SmartTagger() {
 				setFormData({
 					...formData,
 					name: rule.name || formData.name,
+					resourceType: rule.resourceType || formData.resourceType,
 					conditionLogic: rule.conditionLogic || 'AND',
 					conditions: rule.conditions || [],
 					tags: rule.tags || []

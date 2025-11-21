@@ -19,6 +19,7 @@ export class AIService {
                         The JSON schema is:
                         {
                             "name": "string (suggest a short descriptive name)",
+                            "resourceType": "string (orders or customers)",
                             "conditionLogic": "AND" | "OR",
                             "conditions": [
                                 {
@@ -74,6 +75,7 @@ export class AIService {
                         The JSON schema is:
                         {
                             "name": "string (suggest a short descriptive name)",
+                            "resourceType": "string (products or customers)",
                             "conditionLogic": "AND" | "OR",
                             "conditions": [
                                 {
