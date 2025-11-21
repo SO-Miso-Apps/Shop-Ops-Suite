@@ -39,9 +39,7 @@ describe("Metafield Service Logic", () => {
                 conditions: [], // No conditions
                 definition: { namespace: "custom", key: "test", value: "1", valueType: "integer" }
             };
-            (MetafieldRule.find as any).mockReturnValue({
-                sort: vi.fn().mockResolvedValue([mockRule])
-            });
+            (MetafieldRule.find as any).mockResolvedValue([mockRule]);
 
             // Act
             await TaggerService.evaluateMetafieldRules(mockAdmin, shop, { id: 123, title: "Product A" }, "products");
@@ -60,9 +58,7 @@ describe("Metafield Service Logic", () => {
                 conditions: [{ field: "vendor", operator: "equals", value: "Nike" }],
                 definition: { namespace: "custom", key: "brand", value: "Nike", valueType: "single_line_text_field" }
             };
-            (MetafieldRule.find as any).mockReturnValue({
-                sort: vi.fn().mockResolvedValue([mockRule])
-            });
+            (MetafieldRule.find as any).mockResolvedValue([mockRule]);
 
             // Act
             await TaggerService.evaluateMetafieldRules(mockAdmin, shop, { id: 1, vendor: "Nike" }, "products");
@@ -78,9 +74,7 @@ describe("Metafield Service Logic", () => {
                 conditions: [{ field: "vendor", operator: "equals", value: "Nike" }],
                 definition: { namespace: "custom", key: "brand", value: "Nike", valueType: "single_line_text_field" }
             };
-            (MetafieldRule.find as any).mockReturnValue({
-                sort: vi.fn().mockResolvedValue([mockRule])
-            });
+            (MetafieldRule.find as any).mockResolvedValue([mockRule]);
 
             // Act
             await TaggerService.evaluateMetafieldRules(mockAdmin, shop, { id: 1, vendor: "Adidas" }, "products");
@@ -99,9 +93,7 @@ describe("Metafield Service Logic", () => {
                 ],
                 definition: { namespace: "custom", key: "tier", value: "premium", valueType: "single_line_text_field" }
             };
-            (MetafieldRule.find as any).mockReturnValue({
-                sort: vi.fn().mockResolvedValue([mockRule])
-            });
+            (MetafieldRule.find as any).mockResolvedValue([mockRule]);
 
             // Act
             await TaggerService.evaluateMetafieldRules(mockAdmin, shop, { id: 1, vendor: "Nike", price: "150.00" }, "products");
@@ -116,9 +108,7 @@ describe("Metafield Service Logic", () => {
                 conditions: [{ field: "price", operator: "less_than", value: "50" }],
                 definition: { namespace: "custom", key: "tag", value: "cheap", valueType: "single_line_text_field" }
             };
-            (MetafieldRule.find as any).mockReturnValue({
-                sort: vi.fn().mockResolvedValue([mockRule])
-            });
+            (MetafieldRule.find as any).mockResolvedValue([mockRule]);
 
             // Case 1: Price 40 < 50 (Match)
             await TaggerService.evaluateMetafieldRules(mockAdmin, shop, { id: 1, price: "40.00" }, "products");
@@ -137,9 +127,7 @@ describe("Metafield Service Logic", () => {
                 conditions: [{ field: "default_address.country_code", operator: "equals", value: "US" }],
                 definition: { namespace: "custom", key: "market", value: "domestic", valueType: "single_line_text_field" }
             };
-            (MetafieldRule.find as any).mockReturnValue({
-                sort: vi.fn().mockResolvedValue([mockRule])
-            });
+            (MetafieldRule.find as any).mockResolvedValue([mockRule]);
 
             // Act
             await TaggerService.evaluateMetafieldRules(mockAdmin, shop, {
@@ -166,9 +154,7 @@ describe("Metafield Service Logic", () => {
             // So the DB does the filtering.
             // If we want to test that, we should check the arguments to find().
 
-            (MetafieldRule.find as any).mockReturnValue({
-                sort: vi.fn().mockResolvedValue([])
-            });
+            (MetafieldRule.find as any).mockResolvedValue([]);
 
             await TaggerService.evaluateMetafieldRules(mockAdmin, shop, { id: 1 }, 'products');
 
