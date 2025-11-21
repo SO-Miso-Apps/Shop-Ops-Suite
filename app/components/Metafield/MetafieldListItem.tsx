@@ -3,6 +3,7 @@ import type { MetafieldRule } from "~/types/metafield.types";
 
 interface MetafieldListItemProps {
   rule: MetafieldRule;
+  selectedTab: number;
   onEdit?: (rule: MetafieldRule) => void;
   onToggle?: (id: string, currentStatus: boolean) => void;
   onDelete?: (id: string) => void;
@@ -11,6 +12,7 @@ interface MetafieldListItemProps {
 
 export function MetafieldListItem({
   rule,
+  selectedTab,
   onEdit,
   onToggle,
   onDelete,
@@ -55,10 +57,14 @@ export function MetafieldListItem({
         <BlockStack gap="200">
           <InlineStack gap="200" blockAlign="center">
             <Text variant="headingMd" as="h3">{rule.name}</Text>
-            <Badge tone={rule.isEnabled ? "success" : "critical"}>
-              {rule.isEnabled ? "Active" : "Inactive"}
-            </Badge>
-            <Badge tone="info">{rule.resourceType}</Badge>
+            <InlineStack gap="100">
+              {selectedTab === 0 && (
+                <Badge tone={rule.isEnabled ? "success" : "critical"}>
+                  {rule.isEnabled ? "Active" : "Inactive"}
+                </Badge>
+              )}
+              <Badge tone="info">{rule.resourceType}</Badge>
+            </InlineStack>
           </InlineStack>
           <Text variant="bodyMd" as="p" tone="subdued">
             Set <code>{rule.definition.namespace}.{rule.definition.key}</code> to "{rule.definition.value}"

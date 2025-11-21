@@ -386,6 +386,7 @@ export default function MetafieldRules() {
                                         renderItem={(item: MetafieldRule) => (
                                             <MetafieldListItem
                                                 rule={item}
+                                                selectedTab={selectedTab}
                                                 onEdit={selectedTab === 0 ? handleOpenModal : undefined}
                                                 onToggle={selectedTab === 0 ? handleToggle : undefined}
                                                 onDelete={selectedTab === 0 ? handleDelete : undefined}

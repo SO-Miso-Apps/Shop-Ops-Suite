@@ -57,14 +57,16 @@ export function RuleListItem({
         <BlockStack gap="200">
           <InlineStack gap="200" blockAlign="center">
             <Text variant="headingMd" as="h3">{rule.name}</Text>
-            {selectedTab === 0 && (
-              <Badge tone={rule.isEnabled ? "success" : "critical"}>
-                {rule.isEnabled ? "Active" : "Inactive"}
+            <InlineStack gap="100">
+              {selectedTab === 0 && (
+                <Badge tone={rule.isEnabled ? "success" : "critical"}>
+                  {rule.isEnabled ? "Active" : "Inactive"}
+                </Badge>
+              )}
+              <Badge tone={rule.resourceType === 'orders' ? 'info' : 'success'}>
+                {rule.resourceType}
               </Badge>
-            )}
-            <Badge tone={rule.resourceType === 'orders' ? 'info' : 'success'}>
-              {rule.resourceType}
-            </Badge>
+            </InlineStack>
           </InlineStack>
           <Text variant="bodyMd" as="p" tone="subdued">
             Tags: <b>{rule.tags.join(", ")}</b>
