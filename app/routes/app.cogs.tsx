@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useFetcher } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useFetcher, useRevalidator } from "@remix-run/react";
 import {
 	Page,
 	Layout,
@@ -16,10 +16,26 @@ import {
 	Banner,
 	Pagination,
 	Box,
+	IndexFilters,
+	useSetIndexFiltersMode,
+	type IndexFiltersProps,
+	IndexFiltersMode,
+	ChoiceList,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useSearchParams } from "@remix-run/react";
 import { CogsService } from "~/services/cogs.service";
+import { ActivityService } from "~/services/activity.service";
+import {
+	ExportIcon,
+	ImportIcon,
+	MagicIcon,
+	ArrowUpIcon,
+	AlertCircleIcon,
+	MoneyFilledIcon,
+	RefreshIcon,
+	SearchIcon
+} from "@shopify/polaris-icons";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 	const { admin, session } = await authenticate.admin(request);
@@ -30,6 +46,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 	const url = new URL(request.url);
 	const cursor = url.searchParams.get("page_info");
 	const direction = url.searchParams.get("direction") || "next";
+	const filter = url.searchParams.get("filter") || undefined;
+	const query = url.searchParams.get("query") || undefined;
 
 	let paginationArgs;
 	if (isFreePlan) {
@@ -41,18 +59,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 			: { first: 20, after: cursor };
 	}
 
-	const { products, pageInfo } = await CogsService.getProductsWithCosts(admin, paginationArgs);
+	const { products, pageInfo, stats } = await CogsService.getProductsWithCosts(admin, paginationArgs, filter, query);
 
 	// Fetch shop currency
 	const { ShopConfig } = await import("~/models/ShopConfig");
 	const shopConfig = await ShopConfig.findOne({ shop: session.shop });
 	const currencyCode = shopConfig?.currencyCode || "USD";
 
+	// Fetch recent COGS updates
+	const recentActivities = await ActivityService.getLogs(session.shop, 5, { category: "Metafields", search: "Cost" });
+
+
+
 	return json({
 		products,
 		pageInfo: isFreePlan ? { hasNextPage: false, hasPreviousPage: false } : pageInfo,
 		currencyCode,
-		isFreePlan
+		isFreePlan,
+		recentActivities: recentActivities.logs,
+		stats
 	});
 };
 
@@ -79,16 +104,50 @@ import { ProductRow, type ProductData } from "../components/Cogs/ProductRow";
 import { BulkApplyModal } from "../components/Cogs/BulkApplyModal";
 
 export default function COGS() {
-	const { products: initialProducts, pageInfo, currencyCode, isFreePlan } = useLoaderData<typeof loader>();
+	const { products: initialProducts, pageInfo, currencyCode, isFreePlan, recentActivities, stats } = useLoaderData<typeof loader>();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const submit = useSubmit();
 	const nav = useNavigation();
+	const revalidator = useRevalidator();
 	const isSaving = nav.state === "submitting";
 
 	// Local state for optimistic updates
 	const [products, setProducts] = useState<ProductData[]>(initialProducts);
 	const [isModalOpen, setIsModalOpen] = useState(false);
 	const [hasChanges, setHasChanges] = useState(false);
+	const [queryValue, setQueryValue] = useState(searchParams.get("query") || "");
+	const { mode, setMode } = useSetIndexFiltersMode();
+
+	const handleQueryChange = useCallback((value: string) => {
+		setQueryValue(value);
+		setSearchParams((prev) => {
+			if (value) {
+				prev.set("query", value);
+			} else {
+				prev.delete("query");
+			}
+			// Reset pagination when searching
+			prev.delete("page_info");
+			prev.delete("direction");
+			return prev;
+		});
+	}, [setSearchParams]);
+
+	const handleQueryClear = useCallback(() => {
+		handleQueryChange("");
+	}, [handleQueryChange]);
+
+	const handleFiltersClearAll = useCallback(() => {
+		setSearchParams((prev) => {
+			prev.delete("query");
+			prev.delete("page_info");
+			prev.delete("direction");
+			return prev;
+		});
+		setQueryValue("");
+	}, [setSearchParams]);
+
+
 
 	// Sync with loader data if it changes (e.g. after save or pagination)
 	useEffect(() => {
@@ -212,7 +271,8 @@ export default function COGS() {
 			secondaryActions={[
 				{
 					content: "Smart Bulk Apply",
-					onAction: () => setIsModalOpen(true),
+					icon: MagicIcon,
+					onAction: () => setIsModalOpen(true)
 				}
 			]}
 		>
@@ -230,8 +290,79 @@ export default function COGS() {
 						</Box>
 					</Layout.Section>
 				)}
+
+
+				{/* Stats Row */}
+				<Layout.Section>
+					<InlineStack gap="400" align="space-between">
+						<div style={{ flex: 1 }}>
+							<Card>
+								<BlockStack gap="200">
+									<InlineStack align="space-between">
+										<Text variant="headingSm" as="h3">Total Inventory Value</Text>
+										<Box background="bg-surface-secondary" padding="100" borderRadius="200">
+											<div style={{ width: 20, height: 20 }}><MoneyFilledIcon /></div>
+										</Box>
+									</InlineStack>
+									<Text variant="headingLg" as="p">
+										{new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode }).format(stats.totalValue)}
+									</Text>
+								</BlockStack>
+							</Card>
+						</div>
+						<div style={{ flex: 1 }}>
+							<Card>
+								<BlockStack gap="200">
+									<InlineStack align="space-between">
+										<Text variant="headingSm" as="h3">Average Margin</Text>
+										<Box background="bg-surface-secondary" padding="100" borderRadius="200">
+											<div style={{ width: 20, height: 20 }}><ArrowUpIcon /></div>
+										</Box>
+									</InlineStack>
+									<Text variant="headingLg" as="p">{stats.avgMargin}%</Text>
+								</BlockStack>
+							</Card>
+						</div>
+						<div style={{ flex: 1 }}>
+							<Card>
+								<BlockStack gap="200">
+									<InlineStack align="space-between">
+										<Text variant="headingSm" as="h3">Missing Costs</Text>
+										<Box background="bg-surface-critical" padding="100" borderRadius="200">
+											<div style={{ width: 20, height: 20 }}><AlertCircleIcon /></div>
+										</Box>
+									</InlineStack>
+									<Text variant="headingLg" as="p" tone="critical">{stats.missingCosts} Products</Text>
+								</BlockStack>
+							</Card>
+						</div>
+					</InlineStack>
+				</Layout.Section>
+
+
 				<Layout.Section>
 					<Card padding="0">
+						<IndexFilters
+							queryValue={queryValue}
+							queryPlaceholder="Search products"
+							onQueryChange={handleQueryChange}
+							onQueryClear={handleQueryClear}
+							primaryAction={undefined}
+							cancelAction={{
+								onAction: () => { },
+								disabled: false,
+								loading: false,
+							}}
+							tabs={[]}
+							selected={0}
+							onSelect={() => { }}
+							canCreateNewView={false}
+							filters={[]}
+							appliedFilters={[]}
+							onClearAll={handleFiltersClearAll}
+							mode={mode}
+							setMode={setMode}
+						/>
 						<IndexTable
 							resourceName={resourceName}
 							itemCount={products.length}
@@ -253,8 +384,38 @@ export default function COGS() {
 							{rowMarkup}
 						</IndexTable>
 					</Card>
+				</Layout.Section>
 
-
+				{/* Recent Activity */}
+				<Layout.Section>
+					<Card>
+						<BlockStack gap="400">
+							<Text variant="headingMd" as="h2">Recent Cost Updates</Text>
+							{recentActivities && recentActivities.length > 0 ? (
+								<BlockStack gap="400">
+									{recentActivities.map((op: any) => (
+										<Box key={op.id} paddingBlockEnd="200" borderBlockEndWidth="025" borderColor="border">
+											<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+												<BlockStack gap="100">
+													<Text variant="bodyMd" as="span" fontWeight="semibold">{op.action}</Text>
+													<Text variant="bodySm" as="span" tone="subdued">
+														{new Date(op.timestamp).toLocaleString()}
+													</Text>
+												</BlockStack>
+												<div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+													<Text variant="bodySm" as="span" tone={op.status === "Success" ? "success" : op.status === "Failed" ? "critical" : "subdued"}>
+														{op.status}
+													</Text>
+												</div>
+											</div>
+										</Box>
+									))}
+								</BlockStack>
+							) : (
+								<Text variant="bodyMd" as="p" tone="subdued">No recent updates found.</Text>
+							)}
+						</BlockStack>
+					</Card>
 				</Layout.Section>
 			</Layout>
 			<BulkApplyModal

@@ -1,6 +1,6 @@
 export const ProductQuery = `#graphql
-  query GetProducts($first: Int, $after: String, $last: Int, $before: String) {
-    products(first: $first, after: $after, last: $last, before: $before) {
+  query GetProducts($first: Int, $after: String, $last: Int, $before: String, $query: String) {
+    products(first: $first, after: $after, last: $last, before: $before, query: $query) {
       pageInfo {
         hasNextPage
         hasPreviousPage
@@ -32,7 +32,9 @@ export const ProductQuery = `#graphql
               unitCost {
                 amount
               }
+              inventoryHistoryUrl
             }
+            inventoryQuantity
           }
         }
       }

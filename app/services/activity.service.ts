@@ -16,6 +16,7 @@ const ACTION_TO_CATEGORY: Record<string, string> = {
     "Job Queued": "System",
     "Job Completed": "System",
     "Revert": "Bulk Operations",
+    "Updated Product Costs": "Metafields",
 };
 
 export class ActivityService {

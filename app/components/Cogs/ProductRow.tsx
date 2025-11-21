@@ -167,7 +167,7 @@ export function ProductRow({ product, index, onUpdateCost, currencyCode }: Produ
 
         return (
             <div key={variant.id} style={{ padding: '8px 16px', borderBottom: '1px solid #f1f2f4', backgroundColor: '#fafbfb' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '8fr 1fr 1fr 1fr 1fr', gap: '16px', alignItems: 'center' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '7fr 1fr 2fr 1fr 1fr', gap: '16px', alignItems: 'center' }}>
                     <div style={{ paddingLeft: '36px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <Text variant="bodySm" as="span">{variant.title}</Text>
                     </div>
