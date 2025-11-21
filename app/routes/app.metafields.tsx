@@ -1,5 +1,5 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useActionData, useFetcher, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { Outlet, useActionData, useFetcher, useLoaderData, useNavigate, useNavigation, useSubmit } from "@remix-run/react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import {
     Banner,
@@ -23,9 +23,7 @@ import {
 import { PlusIcon } from "@shopify/polaris-icons";
 import { useEffect, useState } from "react";
 import { DeleteConfirmModal } from "~/components/Tagger/DeleteConfirmModal";
-import { MetafieldFormModal } from "~/components/Metafield/MetafieldFormModal";
 import { MetafieldListItem } from "~/components/Metafield/MetafieldListItem";
-import { useMetafieldForm } from "~/hooks/useMetafieldForm";
 import { useDebounce } from "~/hooks/useDebounce";
 import type { MetafieldRule } from "~/types/metafield.types";
 import { MetafieldService } from "../services/metafield.service";
@@ -54,31 +52,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const formData = await request.formData();
     const actionType = formData.get("actionType");
 
-    if (actionType === "saveRule") {
-        const ruleData = JSON.parse(formData.get("rule") as string);
-
-        if (ruleData._id) {
-            try {
-                await MetafieldService.updateRule(ruleData._id, ruleData);
-            } catch (error) {
-                return json({ status: "error", message: (error as Error).message }, { status: 400 });
-            }
-        } else {
-            const { UsageService } = await import("~/services/usage.service");
-            const plan = await UsageService.getPlanType(session.shop);
-            if (plan === "Free") {
-                const count = await MetafieldService.countRules(session.shop);
-                if (count >= 5) {
-                    return json({ status: "error", message: "Free plan limit reached. Upgrade to Pro to create more rules." }, { status: 403 });
-                }
-            }
-            try {
-                await MetafieldService.createRule(session.shop, ruleData);
-            } catch (error) {
-                return json({ status: "error", message: (error as Error).message }, { status: 400 });
-            }
-        }
-    } else if (actionType === "deleteRule") {
+    if (actionType === "deleteRule") {
         const id = formData.get("id") as string;
         await MetafieldService.deleteRule(id);
     } else if (actionType === "toggleRule") {
@@ -94,16 +68,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         delete ruleData.updatedAt;
         ruleData.isEnabled = false;
         await MetafieldService.createRule(session.shop, ruleData);
-    } else if (actionType === "generateRule") {
-        const prompt = formData.get("prompt") as string;
-        const resourceType = formData.get("resourceType") as string;
-        const { AIService } = await import("~/services/ai.service");
-        try {
-            const rule = await AIService.generateMetafieldRuleFromPrompt(prompt, resourceType);
-            return json({ status: "success", rule });
-        } catch (error) {
-            return json({ status: "error", message: "Failed to generate rule" }, { status: 500 });
-        }
     }
 
     return json({ status: "success" });
@@ -115,14 +79,12 @@ export default function MetafieldRules() {
     const shopify = useAppBridge();
     const submit = useSubmit();
     const nav = useNavigation();
+    const navigate = useNavigate();
     const isSaving = nav.state === "submitting";
     const fetcher = useFetcher<any>();
 
     const [selectedTab, setSelectedTab] = useState(0);
-    const [modalOpen, setModalOpen] = useState(false);
     const [deleteId, setDeleteId] = useState<string | null>(null);
-    const [aiPrompt, setAiPrompt] = useState("");
-    const [editingRule, setEditingRule] = useState<MetafieldRule | null>(null);
 
     // Filter and pagination state
     const [searchQuery, setSearchQuery] = useState("");
@@ -134,30 +96,13 @@ export default function MetafieldRules() {
     const [statusPopoverActive, setStatusPopoverActive] = useState(false);
     const itemsPerPage = 20;
 
-    const {
-        formData,
-        setFormData,
-        errors,
-        validateForm,
-        initCreateForm,
-        initEditForm
-    } = useMetafieldForm();
-
     // Handle AI generation response
+    // Handle fetcher responses
     useEffect(() => {
-        if (fetcher.data?.status === "success" && fetcher.data?.rule) {
-            const rule = fetcher.data.rule;
-            setFormData({
-                ...formData,
-                name: rule.name || formData.name,
-                resourceType: rule.resourceType || formData.resourceType,
-                conditionLogic: rule.conditionLogic || 'AND',
-                conditions: rule.conditions || [],
-                definition: rule.definition || formData.definition
-            });
-            shopify.toast.show("Rule generated!");
+        if (fetcher.data?.status === "success") {
+            shopify.toast.show("Success");
         } else if (fetcher.data?.status === "error") {
-            shopify.toast.show(fetcher.data.message || "Failed to generate rule", { isError: true });
+            shopify.toast.show(fetcher.data.message || "An error occurred", { isError: true });
         }
     }, [fetcher.data, shopify]);
 
@@ -197,29 +142,11 @@ export default function MetafieldRules() {
     }, [debouncedSearchQuery, resourceFilter, statusFilter, selectedTab]);
 
     const handleOpenModal = (rule: MetafieldRule | null = null) => {
-        setAiPrompt("");
         if (rule) {
-            setEditingRule(rule);
-            initEditForm(rule);
+            if (rule._id) navigate(rule._id);
         } else {
-            setEditingRule(null);
-            initCreateForm();
+            navigate("new");
         }
-        setModalOpen(true);
-    };
-
-    const handleSave = () => {
-        if (!validateForm()) {
-            return;
-        }
-
-        submit(
-            {
-                actionType: "saveRule",
-                rule: JSON.stringify(formData),
-            },
-            { method: "post" }
-        );
     };
 
     const handleDelete = (id: string) => {
@@ -244,13 +171,7 @@ export default function MetafieldRules() {
         );
     };
 
-    const handleGenerateAI = () => {
-        if (!aiPrompt.trim()) return;
-        fetcher.submit(
-            { actionType: "generateRule", prompt: aiPrompt, resourceType: formData.resourceType },
-            { method: "post" }
-        );
-    };
+
 
     const tabs = [
         { id: "my-rules", content: "My Rules", accessibilityLabel: "My metafield rules" },
@@ -415,20 +336,7 @@ export default function MetafieldRules() {
                 </Layout.Section>
             </Layout>
 
-            <MetafieldFormModal
-                open={modalOpen}
-                onClose={() => setModalOpen(false)}
-                editingRule={editingRule}
-                formData={formData}
-                onFormDataChange={setFormData}
-                errors={errors}
-                onSave={handleSave}
-                isLoading={isSaving}
-                aiPrompt={aiPrompt}
-                onAiPromptChange={setAiPrompt}
-                onGenerateAI={handleGenerateAI}
-                isGenerating={fetcher.state === "submitting"}
-            />
+            <Outlet />
 
             <DeleteConfirmModal
                 open={!!deleteId}

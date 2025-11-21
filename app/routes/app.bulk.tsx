@@ -4,6 +4,8 @@ import {
 	Banner,
 	BlockStack,
 	Box,
+	Button,
+	Card,
 	Layout,
 	Page,
 	ProgressBar,
@@ -16,9 +18,19 @@ import { useBulkForm } from "~/hooks/useBulkForm";
 import type { BulkActionData } from "~/types/bulk.types";
 import { generateJobId } from "~/utils/id-generator";
 import { bulkQueue } from "../queue.server";
+import { ActivityService } from "../services/activity.service";
 import { dryRunTagOperation } from "../services/bulk.server";
 import { UsageService } from "../services/usage.service";
 import { authenticate } from "../shopify.server";
+import {
+	ArchiveIcon,
+	DeleteIcon,
+	DuplicateIcon,
+	EditIcon,
+	MagicIcon,
+	PlusIcon,
+	ReplaceIcon
+} from "@shopify/polaris-icons";
 
 export const loader = async ({ request }: { request: Request }) => {
 	const { session, admin } = await authenticate.admin(request);
@@ -50,7 +62,10 @@ export const loader = async ({ request }: { request: Request }) => {
 
 	const existingTags = Array.from(tagsSet).sort();
 
-	return json({ usage, plan, limit, existingTags });
+	// Fetch recent bulk operations
+	const recentOperations = await ActivityService.getLogs(session.shop, 5, { category: "Bulk Operations" });
+
+	return json({ usage, plan, limit, existingTags, recentOperations: recentOperations.logs });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -203,8 +218,46 @@ export default function BulkOperations() {
 		? Math.round((loaderData.usage.count / loaderData.limit) * 100)
 		: 0;
 
+	const quickActions = [
+		{
+			title: "Find & Replace",
+			description: "Replace a tag with another one.",
+			icon: ReplaceIcon,
+			action: () => {
+				updateFormState({ operation: "replace" });
+				// Scroll to form
+				const formElement = document.getElementById("bulk-form");
+				if (formElement) formElement.scrollIntoView({ behavior: "smooth" });
+			}
+		},
+		{
+			title: "Add Tag",
+			description: "Add a new tag to resources.",
+			icon: PlusIcon,
+			action: () => {
+				updateFormState({ operation: "add" });
+				const formElement = document.getElementById("bulk-form");
+				if (formElement) formElement.scrollIntoView({ behavior: "smooth" });
+			}
+		},
+		{
+			title: "Remove Tag",
+			description: "Remove a specific tag.",
+			icon: DeleteIcon,
+			action: () => {
+				updateFormState({ operation: "remove" });
+				const formElement = document.getElementById("bulk-form");
+				if (formElement) formElement.scrollIntoView({ behavior: "smooth" });
+			}
+		}
+	];
+
 	return (
-		<Page title="Bulk Operations">
+		<Page
+			title="Bulk Operations"
+			subtitle="Manage tags across your entire store in seconds."
+			primaryAction={{ content: "View Activity Log", url: "/app/activity" }}
+		>
 			<Layout>
 				<Layout.Section>
 					{loaderData.plan === "Free" && isShowUpgradeBanner && (
@@ -224,20 +277,80 @@ export default function BulkOperations() {
 						</Banner>
 					)}
 				</Layout.Section>
+
+				{/* Quick Actions */}
 				<Layout.Section>
-					<BulkOperationForm
-						formState={formState}
-						onFormChange={updateFormState}
-						onPreview={handleDryRun}
-						isLoading={isLoading}
-						isQueued={isQueued}
-						isQuotaExceeded={isQuotaExceeded}
-						actionData={actionData}
-						findTagInputValue={findTagInputValue}
-						onFindTagInputChange={setFindTagInputValue}
-						findTagOptions={findTagOptions}
-						onSelectTag={handleSelectTag}
-					/>
+					<BlockStack gap="400">
+						<Text variant="headingMd" as="h2">Quick Actions</Text>
+						<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: "1rem" }}>
+							{quickActions.map((action, index) => (
+								<Box key={index} background="bg-surface" padding="400" borderRadius="200" shadow="200">
+									<BlockStack gap="400">
+										<div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+											<Box background="bg-surface-secondary" padding="200" borderRadius="200">
+												<div style={{ width: 20, height: 20 }}>
+													<action.icon />
+												</div>
+											</Box>
+											<Text variant="headingSm" as="h3">{action.title}</Text>
+										</div>
+										<Text variant="bodyMd" as="p" tone="subdued">{action.description}</Text>
+										<Button onClick={action.action} variant="plain" textAlign="left">Use this template →</Button>
+									</BlockStack>
+								</Box>
+							))}
+						</div>
+					</BlockStack>
+				</Layout.Section>
+
+				<Layout.Section>
+					<div id="bulk-form">
+						<BulkOperationForm
+							formState={formState}
+							onFormChange={updateFormState}
+							onPreview={handleDryRun}
+							isLoading={isLoading}
+							isQueued={isQueued}
+							isQuotaExceeded={isQuotaExceeded}
+							actionData={actionData}
+							findTagInputValue={findTagInputValue}
+							onFindTagInputChange={setFindTagInputValue}
+							findTagOptions={findTagOptions}
+							onSelectTag={handleSelectTag}
+						/>
+					</div>
+				</Layout.Section>
+
+				{/* Recent Activity */}
+				<Layout.Section>
+					<Card>
+						<BlockStack gap="400">
+							<Text variant="headingMd" as="h2">Recent Bulk Operations</Text>
+							{loaderData.recentOperations && loaderData.recentOperations.length > 0 ? (
+								<BlockStack gap="400">
+									{loaderData.recentOperations.map((op: any) => (
+										<Box key={op.id} paddingBlockEnd="200" borderBlockEndWidth="025" borderColor="border">
+											<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+												<BlockStack gap="100">
+													<Text variant="bodyMd" as="span" fontWeight="semibold">{op.action}</Text>
+													<Text variant="bodySm" as="span" tone="subdued">
+														{new Date(op.timestamp).toLocaleString()}
+													</Text>
+												</BlockStack>
+												<div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+													<Text variant="bodySm" as="span" tone={op.status === "Success" ? "success" : op.status === "Failed" ? "critical" : "subdued"}>
+														{op.status}
+													</Text>
+												</div>
+											</div>
+										</Box>
+									))}
+								</BlockStack>
+							) : (
+								<Text variant="bodyMd" as="p" tone="subdued">No recent operations found.</Text>
+							)}
+						</BlockStack>
+					</Card>
 				</Layout.Section>
 			</Layout>
 

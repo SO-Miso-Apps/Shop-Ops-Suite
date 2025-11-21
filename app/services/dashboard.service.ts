@@ -153,6 +153,9 @@ export class DashboardService {
         // Get last 7 days of activity for trend chart
         const activityTrend = await this.getActivityTrend(shop, 7);
 
+        // 6. Fetch Recent Activity Logs
+        const recentActivityData = await ActivityService.getLogs(shop, 5);
+
         return {
             stats: {
                 totalOrders,
@@ -161,6 +164,7 @@ export class DashboardService {
                 savingsHours: savingsHours || 0,
             },
             suggestions: topSuggestions,
+            recentActivities: recentActivityData.logs,
             charts: {
                 categoryBreakdown: categoryStats.map((stat: any) => ({
                     name: stat._id || 'Unknown',

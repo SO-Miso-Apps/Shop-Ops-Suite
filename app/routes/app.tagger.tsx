@@ -1,5 +1,5 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useActionData, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
+import { Outlet, useActionData, useFetcher, useLoaderData, useNavigate, useNavigation } from "@remix-run/react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import {
 	Banner,
@@ -22,9 +22,7 @@ import {
 import { PlusIcon } from "@shopify/polaris-icons";
 import { useCallback, useEffect, useState } from "react";
 import { DeleteConfirmModal } from "~/components/Tagger/DeleteConfirmModal";
-import { RuleFormModal } from "~/components/Tagger/RuleFormModal";
 import { RuleListItem } from "~/components/Tagger/RuleListItem";
-import { useTaggerForm } from "~/hooks/useTaggerForm";
 import { useDebounce } from "~/hooks/useDebounce";
 import type { TaggingRule } from "~/types/tagger.types";
 import { AIService } from "../services/ai.service";
@@ -56,31 +54,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 	const formData = await request.formData();
 	const actionType = formData.get("actionType");
 
-	if (actionType === "saveRule") {
-		const ruleData = JSON.parse(formData.get("ruleData") as string);
-
-		// Check limits if enabling or creating new
-		if (ruleData.isEnabled) {
-			const { UsageService } = await import("~/services/usage.service");
-			const plan = await UsageService.getPlanType(session.shop);
-			if (plan === "Free") {
-				const activeCount = await TaggerService.countActiveRules(session.shop);
-				const isNew = !ruleData._id;
-
-				if (activeCount >= 5) {
-					if (isNew) {
-						return json({ status: "error", message: "Free plan limit reached." }, { status: 403 });
-					}
-					const existing = ruleData._id ? (await TaggerService.getRules(session.shop)).find((r: any) => r._id.toString() === ruleData._id) : null;
-					if (!existing?.isEnabled) {
-						return json({ status: "error", message: "Free plan limit reached." }, { status: 403 });
-					}
-				}
-			}
-		}
-
-		await TaggerService.saveRule(session.shop, ruleData);
-	} else if (actionType === "deleteRule") {
+	if (actionType === "deleteRule") {
 		const id = formData.get("id") as string;
 		await TaggerService.deleteRule(session.shop, id);
 	} else if (actionType === "importRule") {
@@ -91,15 +65,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 		delete ruleData.updatedAt;
 		ruleData.isEnabled = false;
 		await TaggerService.saveRule(session.shop, ruleData);
-	} else if (actionType === "generateRule") {
-		const prompt = formData.get("prompt") as string;
-		const resourceType = formData.get("resourceType") as string;
-		try {
-			const generatedRule = await AIService.generateRuleFromPrompt(prompt, resourceType);
-			return json({ status: "success", generatedRule });
-		} catch (error) {
-			return json({ status: "error", message: "Failed to generate rule" }, { status: 500 });
-		}
 	}
 
 	return json({ status: "success" });
@@ -112,13 +77,11 @@ export default function SmartTagger() {
 	const fetcher = useFetcher();
 	const actionData = useActionData<typeof action>();
 	const shopify = useAppBridge();
+	const navigate = useNavigate();
 	const nav = useNavigation();
 	const isLoading = nav.state === "submitting";
 
 	const [selectedTab, setSelectedTab] = useState(0);
-	const [modalOpen, setModalOpen] = useState(false);
-	const [aiPrompt, setAiPrompt] = useState("");
-	const [editingRule, setEditingRule] = useState<TaggingRule | null>(null);
 	const [deleteId, setDeleteId] = useState<string | null>(null);
 
 	// Filter and pagination state
@@ -131,32 +94,11 @@ export default function SmartTagger() {
 	const [statusPopoverActive, setStatusPopoverActive] = useState(false);
 	const itemsPerPage = 20;
 
-	const {
-		formData,
-		setFormData,
-		errors,
-		validateForm,
-		initCreateForm,
-		initEditForm
-	} = useTaggerForm();
-
 	// Handle action/fetcher responses
 	useEffect(() => {
 		if (actionData?.status === "success" || (fetcher.data as any)?.status === "success") {
-			if ((actionData as any)?.generatedRule || (fetcher.data as any)?.generatedRule) {
-				const rule = (actionData as any)?.generatedRule || (fetcher.data as any)?.generatedRule;
-				setFormData({
-					...formData,
-					name: rule.name || formData.name,
-					resourceType: rule.resourceType || formData.resourceType,
-					conditionLogic: rule.conditionLogic || 'AND',
-					conditions: rule.conditions || [],
-					tags: rule.tags || []
-				});
-				shopify.toast.show("Rule generated!");
-			} else {
+			if ((actionData as any)?.status === "success") {
 				shopify.toast.show("Success");
-				setModalOpen(false);
 			}
 		} else if ((actionData as any)?.status === "error" || (fetcher.data as any)?.status === "error") {
 			shopify.toast.show((actionData as any)?.message || (fetcher.data as any)?.message || "An error occurred", { isError: true });
@@ -206,15 +148,11 @@ export default function SmartTagger() {
 	}, [debouncedSearchQuery, resourceFilter, statusFilter, selectedTab]);
 
 	const handleEdit = (rule: TaggingRule) => {
-		setEditingRule(rule);
-		initEditForm(rule);
-		setModalOpen(true);
+		if (rule._id) navigate(rule._id);
 	};
 
 	const handleCreate = () => {
-		setEditingRule(null);
-		initCreateForm();
-		setModalOpen(true);
+		navigate("new");
 	};
 
 	const handleToggle = (rule: TaggingRule) => {
@@ -237,16 +175,7 @@ export default function SmartTagger() {
 		fetcher.submit({ actionType: "importRule", ruleData: JSON.stringify(rule) }, { method: "post" });
 	};
 
-	const handleSave = () => {
-		if (!validateForm()) {
-			return;
-		}
-		fetcher.submit({ actionType: "saveRule", ruleData: JSON.stringify(formData) }, { method: "post" });
-	};
 
-	const handleGenerateAI = () => {
-		fetcher.submit({ actionType: "generateRule", prompt: aiPrompt, resourceType: formData.resourceType }, { method: "post" });
-	};
 
 	return (
 		<Page
@@ -388,20 +317,7 @@ export default function SmartTagger() {
 				</Layout.Section>
 			</Layout>
 
-			<RuleFormModal
-				open={modalOpen}
-				onClose={() => setModalOpen(false)}
-				editingRule={editingRule}
-				formData={formData}
-				onFormDataChange={setFormData}
-				errors={errors}
-				onSave={handleSave}
-				isLoading={isLoading}
-				aiPrompt={aiPrompt}
-				onAiPromptChange={setAiPrompt}
-				onGenerateAI={handleGenerateAI}
-				isGenerating={fetcher.state === "submitting"}
-			/>
+			<Outlet />
 
 			<DeleteConfirmModal
 				open={!!deleteId}

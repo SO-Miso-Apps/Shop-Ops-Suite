@@ -4,11 +4,22 @@ import {
   Banner,
   BlockStack,
   Box,
+  Button,
+  Card,
   Layout,
   Page,
   ProgressBar,
   Text
 } from "@shopify/polaris";
+import {
+  AlertCircleIcon,
+  CheckIcon,
+  DeleteIcon,
+  DuplicateIcon,
+  MagicIcon,
+  SearchIcon
+} from "@shopify/polaris-icons";
+import { ActivityService } from "../services/activity.service";
 import { useEffect, useState } from "react";
 import { CleanConfirmModal } from "~/components/Cleaner/CleanConfirmModal";
 import { TagSelectionCard } from "~/components/Cleaner/TagSelectionCard";
@@ -27,7 +38,10 @@ export const loader = async ({ request }: { request: Request }) => {
   const plan = await UsageService.getPlanType(session.shop);
   const limit = plan === "Free" ? 500 : null;
 
-  return json({ usage, plan, limit });
+  // Fetch recent cleaning operations
+  const recentOperations = await ActivityService.getLogs(session.shop, 5, { category: "Data Cleaning" });
+
+  return json({ usage, plan, limit, recentOperations: recentOperations.logs });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -207,8 +221,33 @@ export default function DataCleaner() {
     ? Math.round((loaderData.usage.count / loaderData.limit) * 100)
     : 0;
 
+  const quickActions = [
+    {
+      title: "Scan for Duplicates",
+      description: "Find tags that are identical but have different casing (e.g., 'Sale' vs 'sale').",
+      icon: DuplicateIcon,
+      action: handleScan
+    },
+    {
+      title: "Find Malformed Tags",
+      description: "Identify tags with special characters or excessive length.",
+      icon: AlertCircleIcon,
+      action: handleScan
+    },
+    {
+      title: "Full Health Check",
+      description: "Scan your entire store for all tag issues.",
+      icon: SearchIcon,
+      action: handleScan
+    }
+  ];
+
   return (
-    <Page title="Data Cleaner">
+    <Page
+      title="Data Cleaner"
+      subtitle="Keep your store data clean and organized."
+      primaryAction={{ content: "View Activity Log", url: "/app/activity" }}
+    >
       <Layout>
         <Layout.Section>
           {loaderData.plan === "Free" && isShowUpgradeBanner && (
@@ -228,6 +267,34 @@ export default function DataCleaner() {
             </Banner>
           )}
         </Layout.Section>
+
+        {/* Quick Actions */}
+        {!results && (
+          <Layout.Section>
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">Quick Actions</Text>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: "1rem" }}>
+                {quickActions.map((action, index) => (
+                  <Box key={index} background="bg-surface" padding="400" borderRadius="200" shadow="200">
+                    <BlockStack gap="400">
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                        <Box background="bg-surface-secondary" padding="200" borderRadius="200">
+                          <div style={{ width: 20, height: 20 }}>
+                            <action.icon />
+                          </div>
+                        </Box>
+                        <Text variant="headingSm" as="h3">{action.title}</Text>
+                      </div>
+                      <Text variant="bodyMd" as="p" tone="subdued">{action.description}</Text>
+                      <Button onClick={action.action} variant="plain" textAlign="left">Start Scan →</Button>
+                    </BlockStack>
+                  </Box>
+                ))}
+              </div>
+            </BlockStack>
+          </Layout.Section>
+        )}
+
         <Layout.Section>
           <TagSelectionCard
             results={results}
@@ -243,6 +310,38 @@ export default function DataCleaner() {
             quotaExceeded={actionData?.status === "quota_exceeded"}
             quotaMessage={actionData?.message}
           />
+        </Layout.Section>
+
+        {/* Recent Activity */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text variant="headingMd" as="h2">Recent Cleaning Jobs</Text>
+              {loaderData.recentOperations && loaderData.recentOperations.length > 0 ? (
+                <BlockStack gap="400">
+                  {loaderData.recentOperations.map((op: any) => (
+                    <Box key={op.id} paddingBlockEnd="200" borderBlockEndWidth="025" borderColor="border">
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <BlockStack gap="100">
+                          <Text variant="bodyMd" as="span" fontWeight="semibold">{op.action}</Text>
+                          <Text variant="bodySm" as="span" tone="subdued">
+                            {new Date(op.timestamp).toLocaleString()}
+                          </Text>
+                        </BlockStack>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <Text variant="bodySm" as="span" tone={op.status === "Success" ? "success" : op.status === "Failed" ? "critical" : "subdued"}>
+                            {op.status}
+                          </Text>
+                        </div>
+                      </div>
+                    </Box>
+                  ))}
+                </BlockStack>
+              ) : (
+                <Text variant="bodyMd" as="p" tone="subdued">No recent cleaning jobs found.</Text>
+              )}
+            </BlockStack>
+          </Card>
         </Layout.Section>
       </Layout>
 
