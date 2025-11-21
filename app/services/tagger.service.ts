@@ -189,7 +189,7 @@ export class TaggerService {
             shop,
             resourceType,
             isEnabled: true
-        }).sort({ priority: -1 });
+        });
 
         if (rules.length === 0) {
             console.log(`ℹ No active rules found for ${resourceType}`);
@@ -199,7 +199,7 @@ export class TaggerService {
         const mutationsToRun: any[] = [];
 
         for (const rule of rules) {
-            const isMatch = TaggerService.checkConditions(resource, rule.conditions, 'AND'); // Metafield rules default to AND for now
+            const isMatch = TaggerService.checkConditions(resource, rule.conditions, rule.conditionLogic || 'AND');
 
             if (isMatch) {
                 const ownerId = resourceType === "products"

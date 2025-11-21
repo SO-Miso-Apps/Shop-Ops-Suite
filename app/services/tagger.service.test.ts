@@ -14,6 +14,12 @@ vi.mock('../models/TaggingRule', () => ({
   }
 }));
 
+vi.mock('../models/MetafieldRule', () => ({
+  MetafieldRule: {
+    find: vi.fn(),
+  }
+}));
+
 // Mock ActivityService
 vi.mock('./activity.service', () => ({
   ActivityService: {
@@ -234,6 +240,59 @@ describe('TaggerService', () => {
       const conditions = [{ field: "customer.default_address.country_code", operator: "equals", value: "US" }];
       const result = TaggerService.checkConditions(order, conditions);
       expect(result).toBe(true);
+    });
+  });
+
+  describe('evaluateMetafieldRules', () => {
+    it('should apply metafield when rule matches with OR logic', async () => {
+      const { MetafieldRule } = await import('../models/MetafieldRule');
+      const customerRules = [{
+        name: "Metafield OR Rule",
+        conditionLogic: "OR",
+        conditions: [
+          { field: "total_spent", operator: "greater_than", value: "1000" }, // False
+          { field: "orders_count", operator: "equals", value: "2" } // True
+        ],
+        definition: {
+          namespace: "custom",
+          key: "vip_status",
+          value: "true",
+          valueType: "single_line_text_field"
+        },
+        isEnabled: true
+      }];
+
+      // Mock find() directly since we removed sort()
+      (MetafieldRule.find as any).mockResolvedValue(customerRules);
+
+      mockAdmin.graphql.mockResolvedValue({
+        json: async () => ({
+          data: {
+            metafieldsSet: {
+              metafields: [],
+              userErrors: []
+            }
+          }
+        })
+      });
+
+      const customerResource = { id: 456, orders_count: 2, total_spent: "100" };
+
+      await TaggerService.evaluateMetafieldRules(mockAdmin, "test-shop", customerResource as any, "customers");
+
+      expect(mockAdmin.graphql).toHaveBeenCalledWith(expect.stringContaining("metafieldsSet"), expect.objectContaining({
+        variables: {
+          metafields: [
+            {
+              namespace: "custom",
+              key: "vip_status",
+              value: "true",
+              type: "single_line_text_field",
+              ownerId: "gid://shopify/Customer/456"
+            }
+          ]
+        }
+      }));
     });
   });
 });

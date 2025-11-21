@@ -61,4 +61,63 @@ export class AIService {
       throw new Error("Failed to generate rule from AI");
     }
   }
+  public static async generateMetafieldRuleFromPrompt(prompt: string, resourceType: string): Promise<any> {
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: "GLM-4.5",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert Shopify automation assistant. 
+                        Convert the user's natural language request into a JSON object representing a metafield rule.
+                        
+                        The JSON schema is:
+                        {
+                            "name": "string (suggest a short descriptive name)",
+                            "conditionLogic": "AND" | "OR",
+                            "conditions": [
+                                {
+                                    "field": "string (see allowed fields below)",
+                                    "operator": "string (see allowed operators below)",
+                                    "value": "string"
+                                }
+                            ],
+                            "definition": {
+                                "namespace": "string (suggest a namespace, e.g. custom, product_info)",
+                                "key": "string (suggest a key, e.g. material, size)",
+                                "value": "string (the value to set for the metafield)",
+                                "valueType": "string (single_line_text_field, number_integer, number_decimal, json)"
+                            }
+                        }
+
+                        Allowed Fields for ${resourceType}:
+                        ${resourceType === 'products'
+                ? `- title, product_type, vendor, tags, variants[0].price, variants[0].inventory_quantity`
+                : `- total_spent, orders_count, tags, default_address.country_code, email`}
+
+                        Allowed Operators:
+                        - equals, not_equals, contains, starts_with, ends_with, greater_than, less_than
+
+                        IMPORTANT: Return ONLY the JSON object. No markdown formatting.
+                        `
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0.1,
+      });
+
+      const content = completion.choices[0]?.message?.content;
+      if (!content) throw new Error("No response from AI");
+
+      const cleanContent = content.replace(/```json/g, "").replace(/```/g, "").trim();
+
+      return JSON.parse(cleanContent);
+    } catch (error) {
+      console.error("Error generating metafield rule from AI:", error);
+      throw new Error("Failed to generate metafield rule from AI");
+    }
+  }
 }

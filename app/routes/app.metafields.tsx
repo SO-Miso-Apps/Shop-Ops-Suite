@@ -1,30 +1,26 @@
-import { useState, useCallback, useEffect } from "react";
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
+import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
+import { useActionData, useFetcher, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import {
-    Page,
-    Layout,
-    Card,
-    ResourceList,
-    ResourceItem,
-    Text,
-    Button,
-    Modal,
-    TextField,
-    BlockStack,
-    InlineStack,
-    Select,
-    EmptyState,
-    Badge,
     Banner,
     Box,
-    Divider,
-    Icon
+    Button,
+    Card,
+    EmptyState,
+    Layout,
+    Modal,
+    Page,
+    ResourceList,
+    Text
 } from "@shopify/polaris";
-import { PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
-import { authenticate } from "../shopify.server";
+import { useEffect, useState } from "react";
+import { DeleteConfirmModal } from "~/components/Tagger/DeleteConfirmModal";
+import { MetafieldFormModal } from "~/components/Metafield/MetafieldFormModal";
+import { MetafieldListItem } from "~/components/Metafield/MetafieldListItem";
+import { useMetafieldForm } from "~/hooks/useMetafieldForm";
+import type { MetafieldRule } from "~/types/metafield.types";
 import { MetafieldService } from "../services/metafield.service";
-import { useAppBridge } from "@shopify/app-bridge-react";
+import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
     const { session } = await authenticate.admin(request);
@@ -52,7 +48,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const ruleData = JSON.parse(formData.get("rule") as string);
 
         if (ruleData._id) {
-            await MetafieldService.updateRule(ruleData._id, ruleData);
+            try {
+                await MetafieldService.updateRule(ruleData._id, ruleData);
+            } catch (error) {
+                return json({ status: "error", message: (error as Error).message }, { status: 400 });
+            }
         } else {
             const { UsageService } = await import("~/services/usage.service");
             const plan = await UsageService.getPlanType(session.shop);
@@ -62,7 +62,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     return json({ status: "error", message: "Free plan limit reached. Upgrade to Pro to create more rules." }, { status: 403 });
                 }
             }
-            await MetafieldService.createRule(session.shop, ruleData);
+            try {
+                await MetafieldService.createRule(session.shop, ruleData);
+            } catch (error) {
+                return json({ status: "error", message: (error as Error).message }, { status: 400 });
+            }
         }
     } else if (actionType === "deleteRule") {
         const id = formData.get("id") as string;
@@ -71,6 +75,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const id = formData.get("id") as string;
         const isEnabled = formData.get("isEnabled") === "true";
         await MetafieldService.toggleRule(id, isEnabled);
+    } else if (actionType === "generateRule") {
+        const prompt = formData.get("prompt") as string;
+        const resourceType = formData.get("resourceType") as string;
+        const { AIService } = await import("~/services/ai.service");
+        try {
+            const rule = await AIService.generateMetafieldRuleFromPrompt(prompt, resourceType);
+            return json({ status: "success", rule });
+        } catch (error) {
+            return json({ status: "error", message: "Failed to generate rule" }, { status: 500 });
+        }
     }
 
     return json({ status: "success" });
@@ -83,102 +97,86 @@ export default function MetafieldRules() {
     const submit = useSubmit();
     const nav = useNavigation();
     const isSaving = nav.state === "submitting";
+    const fetcher = useFetcher<any>();
 
     const [modalOpen, setModalOpen] = useState(false);
-    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-    const [selectedRuleToDelete, setSelectedRuleToDelete] = useState<string | null>(null);
+    const [deleteId, setDeleteId] = useState<string | null>(null);
+    const [aiPrompt, setAiPrompt] = useState("");
+    const [editingRule, setEditingRule] = useState<MetafieldRule | null>(null);
 
+    const {
+        formData,
+        setFormData,
+        errors,
+        validateForm,
+        initCreateForm,
+        initEditForm
+    } = useMetafieldForm();
+
+    // Handle action responses
     useEffect(() => {
         if (actionData?.status === "success") {
             shopify.toast.show("Action completed successfully");
+            setModalOpen(false);
         } else if ((actionData as any)?.status === "error") {
             shopify.toast.show((actionData as any)?.message || "An error occurred", { isError: true });
         }
     }, [actionData, shopify]);
 
-    // Initial State template
-    const initialRuleState = {
-        name: "",
-        resourceType: "products",
-        isEnabled: true,
-        conditions: [],
-        definition: {
-            namespace: "custom",
-            key: "",
-            valueType: "single_line_text_field",
-            value: ""
+    // Handle AI generation response
+    useEffect(() => {
+        if (fetcher.data?.status === "success" && fetcher.data?.rule) {
+            const generatedRule = fetcher.data.rule;
+            setFormData({
+                ...formData,
+                name: generatedRule.name || formData.name,
+                conditions: generatedRule.conditions || [],
+                conditionLogic: generatedRule.conditionLogic || 'AND',
+                definition: {
+                    ...formData.definition,
+                    ...generatedRule.definition
+                }
+            });
+            shopify.toast.show("Rule generated from AI!");
+        } else if (fetcher.data?.status === "error") {
+            shopify.toast.show("Failed to generate rule from AI", { isError: true });
         }
-    };
+    }, [fetcher.data, shopify]);
 
-    const [formState, setFormState] = useState<any>(initialRuleState);
-
-    // NEW: Validation Error State
-    const [errors, setErrors] = useState<Record<string, string>>({});
-
-    const handleOpenModal = (rule: any = null) => {
-        setErrors({}); // Reset errors
+    const handleOpenModal = (rule: MetafieldRule | null = null) => {
+        setAiPrompt("");
         if (rule) {
-            setFormState(rule);
+            setEditingRule(rule);
+            initEditForm(rule);
         } else {
-            setFormState(initialRuleState);
+            setEditingRule(null);
+            initCreateForm();
         }
         setModalOpen(true);
     };
 
-    // NEW: Validation Logic
-    const validateForm = useCallback(() => {
-        const newErrors: Record<string, string> = {};
-        const shopifyKeyRegex = /^[a-zA-Z0-9_-]{3,255}$/; // Chuẩn Shopify: 3-255 ký tự, không ký tự đặc biệt
-
-        if (!formState.name.trim()) {
-            newErrors.name = "Rule name is required";
-        }
-
-        if (!formState.definition.namespace.trim()) {
-            newErrors.namespace = "Namespace is required";
-        } else if (!shopifyKeyRegex.test(formState.definition.namespace)) {
-            newErrors.namespace = "Namespace must be 3-255 chars, alphanumeric, no spaces.";
-        }
-
-        if (!formState.definition.key.trim()) {
-            newErrors.key = "Key is required";
-        } else if (!shopifyKeyRegex.test(formState.definition.key)) {
-            newErrors.key = "Key must be 3-255 chars, alphanumeric, no spaces.";
-        }
-
-        if (!formState.definition.value.trim()) {
-            newErrors.value = "Value is required";
-        }
-
-        setErrors(newErrors);
-        return Object.keys(newErrors).length === 0;
-    }, [formState]);
-
     const handleSave = () => {
         if (!validateForm()) {
-            return; // Stop if validation fails
+            return;
         }
 
         submit(
             {
                 actionType: "saveRule",
-                rule: JSON.stringify(formState),
+                rule: JSON.stringify(formData),
             },
             { method: "post" }
         );
-        setModalOpen(false);
     };
 
     const handleDelete = (id: string) => {
-        setSelectedRuleToDelete(id);
-        setDeleteModalOpen(true);
+        setDeleteId(id);
     };
 
     const confirmDelete = () => {
-        if (selectedRuleToDelete) {
-            submit({ actionType: "deleteRule", id: selectedRuleToDelete }, { method: "post" });
-            setDeleteModalOpen(false);
-            setSelectedRuleToDelete(null);
+        if (deleteId) {
+            submit({ actionType: "deleteRule", id: deleteId }, { method: "post" });
+            setDeleteId(null);
         }
     };
 
@@ -186,22 +184,12 @@ export default function MetafieldRules() {
         submit({ actionType: "toggleRule", id, isEnabled: (!currentStatus).toString() }, { method: "post" });
     };
 
-    const updateCondition = (index: number, field: string, value: string) => {
-        const newConditions = [...formState.conditions];
-        newConditions[index] = { ...newConditions[index], [field]: value };
-        setFormState({ ...formState, conditions: newConditions });
-    };
-
-    const addCondition = () => {
-        setFormState({
-            ...formState,
-            conditions: [...formState.conditions, { field: "vendor", operator: "equals", value: "" }]
-        });
-    };
-
-    const removeCondition = (index: number) => {
-        const newConditions = formState.conditions.filter((_: any, i: number) => i !== index);
-        setFormState({ ...formState, conditions: newConditions });
+    const handleGenerateAI = () => {
+        if (!aiPrompt.trim()) return;
+        fetcher.submit(
+            { actionType: "generateRule", prompt: aiPrompt, resourceType: formData.resourceType },
+            { method: "post" }
+        );
     };
 
     return (
@@ -235,235 +223,41 @@ export default function MetafieldRules() {
                             <ResourceList
                                 resourceName={{ singular: "rule", plural: "rules" }}
                                 items={rules}
-                                renderItem={(item: any) => {
-                                    return (
-                                        <ResourceItem
-                                            id={item._id}
-                                            accessibilityLabel={`Edit ${item.name}`}
-                                            onClick={() => handleOpenModal(item)}
-                                            shortcutActions={[
-                                                {
-                                                    content: item.isEnabled ? 'Turn Off' : 'Turn On',
-                                                    onAction: () => handleToggle(item._id, item.isEnabled),
-                                                },
-                                                {
-                                                    content: 'Delete',
-                                                    onAction: () => handleDelete(item._id),
-                                                }
-                                            ]}
-                                        >
-                                            <InlineStack align="space-between" blockAlign="center">
-                                                <BlockStack gap="200">
-                                                    <InlineStack gap="200" blockAlign="center">
-                                                        <Text variant="headingMd" as="h3">{item.name}</Text>
-                                                        <Badge tone={item.isEnabled ? "success" : "critical"}>
-                                                            {item.isEnabled ? "Active" : "Inactive"}
-                                                        </Badge>
-                                                        <Badge tone="info">{item.resourceType}</Badge>
-                                                    </InlineStack>
-                                                    <Text variant="bodyMd" as="p" tone="subdued">
-                                                        Set <code>{item.definition.namespace}.{item.definition.key}</code> to "{item.definition.value}"
-                                                    </Text>
-                                                    <Text variant="bodySm" as="p">
-                                                        {item.conditions.length === 0
-                                                            ? "Applied to ALL items"
-                                                            : `When: ${item.conditions.map((c: any) => `${c.field} ${c.operator} ${c.value}`).join(" AND ")}`
-                                                        }
-                                                    </Text>
-                                                </BlockStack>
-                                            </InlineStack>
-                                        </ResourceItem>
-                                    );
-                                }}
+                                renderItem={(item: MetafieldRule) => (
+                                    <MetafieldListItem
+                                        rule={item}
+                                        onEdit={handleOpenModal}
+                                        onToggle={handleToggle}
+                                        onDelete={handleDelete}
+                                    />
+                                )}
                             />
                         )}
                     </Card>
                 </Layout.Section>
             </Layout>
 
-            <Modal
+            <MetafieldFormModal
                 open={modalOpen}
                 onClose={() => setModalOpen(false)}
-                title={formState._id ? "Edit Rule" : "Create New Rule"}
-                primaryAction={{
-                    content: "Save Rule",
-                    onAction: handleSave,
-                    loading: isSaving,
-                }}
-                secondaryActions={[{ content: "Cancel", onAction: () => setModalOpen(false) }]}
-                size="large"
-            >
-                <Modal.Section>
-                    <BlockStack gap="500">
-                        {/* General Info */}
-                        <BlockStack gap="300">
-                            <Text variant="headingSm" as="h3">General Information</Text>
-                            <InlineStack gap="400">
-                                <div style={{ flex: 2 }}>
-                                    <TextField
-                                        label="Rule Name"
-                                        value={formState.name}
-                                        onChange={(v) => setFormState({ ...formState, name: v })}
-                                        autoComplete="off"
-                                        placeholder="e.g. Nike Shoes Material"
-                                        error={errors.name}
-                                    />
-                                </div>
-                                <div style={{ flex: 1 }}>
-                                    <Select
-                                        label="Resource Type"
-                                        options={[
-                                            { label: "Products", value: "products" },
-                                            { label: "Customers", value: "customers" },
-                                        ]}
-                                        value={formState.resourceType}
-                                        onChange={(v) => setFormState({ ...formState, resourceType: v })}
-                                    />
-                                </div>
-                            </InlineStack>
-                        </BlockStack>
+                editingRule={editingRule}
+                formData={formData}
+                onFormDataChange={setFormData}
+                errors={errors}
+                onSave={handleSave}
+                isLoading={isSaving}
+                aiPrompt={aiPrompt}
+                onAiPromptChange={setAiPrompt}
+                onGenerateAI={handleGenerateAI}
+                isGenerating={fetcher.state === "submitting"}
+            />
 
-                        <Divider />
-
-                        {/* Conditions */}
-                        <BlockStack gap="300">
-                            <InlineStack align="space-between">
-                                <Text variant="headingSm" as="h3">Conditions (ALL must be true)</Text>
-                                <Button icon={PlusIcon} onClick={addCondition} variant="plain">Add Condition</Button>
-                            </InlineStack>
-
-                            {formState.conditions.length === 0 && (
-                                <Banner tone="info">No conditions set. This rule will apply to ALL new {formState.resourceType}.</Banner>
-                            )}
-
-                            {formState.conditions.map((condition: any, index: number) => (
-                                <InlineStack key={index} gap="300" align="start">
-                                    <div style={{ width: '150px' }}>
-                                        <Select
-                                            label="Field"
-                                            labelHidden
-                                            options={
-                                                formState.resourceType === 'products'
-                                                    ? [
-                                                        { label: "Vendor", value: "vendor" },
-                                                        { label: "Product Type", value: "product_type" },
-                                                        { label: "Title", value: "title" },
-                                                        { label: "Tag", value: "tags" },
-                                                        { label: "Price", value: "price" },
-                                                        { label: "SKU", value: "sku" }
-                                                    ]
-                                                    : [
-                                                        { label: "Email", value: "email" },
-                                                        { label: "Tags", value: "tags" },
-                                                        { label: "Total Spent", value: "total_spent" },
-                                                        { label: "Country", value: "default_address.country_code" }
-                                                    ]
-                                            }
-                                            value={condition.field}
-                                            onChange={(v) => updateCondition(index, 'field', v)}
-                                        />
-                                    </div>
-                                    <div style={{ width: '150px' }}>
-                                        <Select
-                                            label="Operator"
-                                            labelHidden
-                                            options={[
-                                                { label: "Equals", value: "equals" },
-                                                { label: "Not Equals", value: "not_equals" },
-                                                { label: "Contains", value: "contains" },
-                                                { label: "Starts With", value: "starts_with" },
-                                                { label: "Greater Than", value: "greater_than" },
-                                                { label: "Less Than", value: "less_than" },
-                                            ]}
-                                            value={condition.operator}
-                                            onChange={(v) => updateCondition(index, 'operator', v)}
-                                        />
-                                    </div>
-                                    <div style={{ flex: 1 }}>
-                                        <TextField
-                                            label="Value"
-                                            labelHidden
-                                            value={condition.value}
-                                            onChange={(v) => updateCondition(index, 'value', v)}
-                                            autoComplete="off"
-                                            placeholder="Value to match..."
-                                        />
-                                    </div>
-                                    <div style={{ marginTop: '4px' }}>
-                                        <Button icon={DeleteIcon} onClick={() => removeCondition(index)} tone="critical" variant="plain" />
-                                    </div>
-                                </InlineStack>
-                            ))}
-                        </BlockStack>
-
-                        <Divider />
-
-                        {/* Actions */}
-                        <BlockStack gap="300">
-                            <Text variant="headingSm" as="h3">Action: Set Metafield</Text>
-                            <InlineStack gap="400">
-                                <TextField
-                                    label="Namespace"
-                                    value={formState.definition.namespace}
-                                    onChange={(v) => setFormState({ ...formState, definition: { ...formState.definition, namespace: v } })}
-                                    autoComplete="off"
-                                    error={errors.namespace}
-                                    helpText="e.g. custom, my_app (3-255 chars, no spaces)"
-                                />
-                                <TextField
-                                    label="Key"
-                                    value={formState.definition.key}
-                                    onChange={(v) => setFormState({ ...formState, definition: { ...formState.definition, key: v } })}
-                                    autoComplete="off"
-                                    error={errors.key}
-                                    helpText="e.g. material, size (3-255 chars, no spaces)"
-                                />
-                                <Select
-                                    label="Type"
-                                    options={[
-                                        { label: "Single Line Text", value: "single_line_text_field" },
-                                        { label: "Integer", value: "number_integer" },
-                                        { label: "Decimal", value: "number_decimal" },
-                                        { label: "JSON", value: "json" },
-                                    ]}
-                                    value={formState.definition.valueType}
-                                    onChange={(v) => setFormState({ ...formState, definition: { ...formState.definition, valueType: v } })}
-                                />
-                            </InlineStack>
-                            <TextField
-                                label="Value to Set"
-                                value={formState.definition.value}
-                                onChange={(v) => setFormState({ ...formState, definition: { ...formState.definition, value: v } })}
-                                autoComplete="off"
-                                multiline={formState.definition.valueType === 'json' ? 3 : undefined}
-                                error={errors.value}
-                            />
-                        </BlockStack>
-                    </BlockStack>
-                </Modal.Section>
-            </Modal>
-            <Modal
-                open={deleteModalOpen}
-                onClose={() => setDeleteModalOpen(false)}
-                title="Delete Rule?"
-                primaryAction={{
-                    content: "Delete",
-                    onAction: confirmDelete,
-                    destructive: true,
-                }}
-                secondaryActions={[
-                    {
-                        content: "Cancel",
-                        onAction: () => setDeleteModalOpen(false),
-                    },
-                ]}
-            >
-                <Modal.Section>
-                    <Text as="p">
-                        Are you sure you want to delete this rule? This action cannot be undone.
-                    </Text>
-                </Modal.Section>
-            </Modal>
+            <DeleteConfirmModal
+                open={!!deleteId}
+                onClose={() => setDeleteId(null)}
+                onConfirm={confirmDelete}
+                isLoading={isSaving}
+            />
         </Page>
     );
 }

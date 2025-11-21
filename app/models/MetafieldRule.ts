@@ -7,7 +7,8 @@ const metafieldRuleSchema = new mongoose.Schema({
     name: { type: String, required: true }, // Tên quy tắc gợi nhớ
     resourceType: { type: String, required: true, enum: ['products', 'customers'] },
     isEnabled: { type: Boolean, default: true },
-    priority: { type: Number, default: 0 }, // Ưu tiên xử lý
+
+    conditionLogic: { type: String, enum: ['AND', 'OR'], default: 'AND' },
 
     // Điều kiện để áp dụng (Logic AND)
     conditions: [{
