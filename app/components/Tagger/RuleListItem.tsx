@@ -4,6 +4,7 @@ import type { TaggingRule } from "~/types/tagger.types";
 interface RuleListItemProps {
   rule: TaggingRule;
   selectedTab: number;
+  limited: boolean;
   onEdit?: (rule: TaggingRule) => void;
   onToggle?: (rule: TaggingRule) => void;
   onDelete?: (id: string) => void;
@@ -13,6 +14,7 @@ interface RuleListItemProps {
 export function RuleListItem({
   rule,
   selectedTab,
+  limited,
   onEdit,
   onToggle,
   onDelete,
@@ -30,10 +32,12 @@ export function RuleListItem({
         {
           content: rule.isEnabled ? 'Turn Off' : 'Turn On',
           onAction: () => onToggle?.(rule),
+          disabled: !rule.isEnabled && limited,
         },
         {
           content: 'Delete',
           onAction: () => onDelete?.(rule._id!),
+          destructive: true,
         }
       ];
     } else {
@@ -55,7 +59,7 @@ export function RuleListItem({
     >
       <InlineStack align="space-between" blockAlign="center">
         <BlockStack gap="200">
-          <InlineStack gap="200" blockAlign="center">
+          <InlineStack gap="200" blockAlign="center" align="start">
             <Text variant="headingMd" as="h3">{rule.name}</Text>
             <InlineStack gap="100">
               {selectedTab === 0 && (

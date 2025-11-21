@@ -387,6 +387,7 @@ export default function MetafieldRules() {
                                             <MetafieldListItem
                                                 rule={item}
                                                 selectedTab={selectedTab}
+                                                limited={isLimitReached}
                                                 onEdit={selectedTab === 0 ? handleOpenModal : undefined}
                                                 onToggle={selectedTab === 0 ? handleToggle : undefined}
                                                 onDelete={selectedTab === 0 ? handleDelete : undefined}

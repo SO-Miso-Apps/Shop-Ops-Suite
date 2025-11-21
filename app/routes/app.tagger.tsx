@@ -362,6 +362,7 @@ export default function SmartTagger() {
 									<RuleListItem
 										rule={item}
 										selectedTab={selectedTab}
+										limited={isLimitReached}
 										onEdit={handleEdit}
 										onToggle={handleToggle}
 										onDelete={handleDelete}

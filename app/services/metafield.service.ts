@@ -7,7 +7,7 @@ export class MetafieldService {
     }
 
     static async countRules(shop: string) {
-        return await MetafieldRule.countDocuments({ shop });
+        return await MetafieldRule.countDocuments({ shop, isEnabled: true });
     }
 
     static async getLibraryRules() {
