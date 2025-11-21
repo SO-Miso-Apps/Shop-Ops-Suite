@@ -99,7 +99,7 @@ export default function Dashboard() {
   })) : [];
 
   return (
-    <Page title="Dashboard" subtitle="Shop-Ops Suite Overview" primaryAction={{ content: "New Rule", onAction: () => navigate("/app/tagger/new"), icon: PlusIcon }}>
+    <Page title="Dashboard" subtitle="Shop-Ops Suite Overview">
 
       <Layout>
         {/* Setup Guide */}
