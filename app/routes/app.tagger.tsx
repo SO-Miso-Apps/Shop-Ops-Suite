@@ -1,5 +1,5 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { Outlet, useActionData, useFetcher, useLoaderData, useNavigate, useNavigation } from "@remix-run/react";
+import { Outlet, useActionData, useLoaderData, useNavigate, useNavigation, useSubmit } from "@remix-run/react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import {
 	Banner,
@@ -25,7 +25,6 @@ import { DeleteConfirmModal } from "~/components/Tagger/DeleteConfirmModal";
 import { RuleListItem } from "~/components/Tagger/RuleListItem";
 import { useDebounce } from "~/hooks/useDebounce";
 import type { TaggingRule } from "~/types/tagger.types";
-import { AIService } from "../services/ai.service";
 import { TaggerService } from "../services/tagger.service";
 import { authenticate } from "../shopify.server";
 
@@ -54,28 +53,36 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 	const formData = await request.formData();
 	const actionType = formData.get("actionType");
 
-	if (actionType === "deleteRule") {
-		const id = formData.get("id") as string;
-		await TaggerService.deleteRule(session.shop, id);
-	} else if (actionType === "importRule") {
-		const ruleData = JSON.parse(formData.get("ruleData") as string);
-		delete ruleData._id;
-		delete ruleData.shop;
-		delete ruleData.createdAt;
-		delete ruleData.updatedAt;
-		ruleData.isEnabled = false;
-		await TaggerService.saveRule(session.shop, ruleData);
+	try {
+		if (actionType === "deleteRule") {
+			const id = formData.get("id") as string;
+			await TaggerService.deleteRule(session.shop, id);
+		} else if (actionType === "toggleRule") {
+			const id = formData.get("id") as string;
+			const isEnabled = formData.get("isEnabled") === "true";
+			await TaggerService.toggleRule(session.shop, id, isEnabled);
+		} else if (actionType === "importRule") {
+			const ruleData = JSON.parse(formData.get("ruleData") as string);
+			delete ruleData._id;
+			delete ruleData.shop;
+			delete ruleData.createdAt;
+			delete ruleData.updatedAt;
+			ruleData.isEnabled = false;
+			await TaggerService.saveRule(session.shop, ruleData);
+		}
+	} catch (error) {
+		return { status: "error", message: (error as Error).message }
 	}
 
-	return json({ status: "success" });
+	return { status: "success" }
 };
 
 // --- Frontend Logic ---
 
 export default function SmartTagger() {
 	const { rules, libraryRules, isLimitReached } = useLoaderData<typeof loader>();
-	const fetcher = useFetcher();
-	const actionData = useActionData<typeof action>();
+	const submit = useSubmit();
+	const actionData = useActionData<{ status: string, message?: string }>();
 	const shopify = useAppBridge();
 	const navigate = useNavigate();
 	const nav = useNavigation();
@@ -96,14 +103,10 @@ export default function SmartTagger() {
 
 	// Handle action/fetcher responses
 	useEffect(() => {
-		if (actionData?.status === "success" || (fetcher.data as any)?.status === "success") {
-			if ((actionData as any)?.status === "success") {
-				shopify.toast.show("Success");
-			}
-		} else if ((actionData as any)?.status === "error" || (fetcher.data as any)?.status === "error") {
-			shopify.toast.show((actionData as any)?.message || (fetcher.data as any)?.message || "An error occurred", { isError: true });
+		if (actionData?.status === "success") {
+			shopify.toast.show("Success");
 		}
-	}, [actionData, fetcher.data, shopify]);
+	}, [actionData, shopify]);
 
 	const handleTabChange = useCallback((selectedTabIndex: number) => setSelectedTab(selectedTabIndex), []);
 
@@ -155,9 +158,8 @@ export default function SmartTagger() {
 		navigate("new");
 	};
 
-	const handleToggle = (rule: TaggingRule) => {
-		const newItem = { ...rule, isEnabled: !rule.isEnabled };
-		fetcher.submit({ actionType: "saveRule", ruleData: JSON.stringify(newItem) }, { method: "post" });
+	const handleToggle = (id: string, currentStatus: boolean) => {
+		submit({ actionType: "toggleRule", id, isEnabled: (!currentStatus).toString() }, { method: "post" });
 	};
 
 	const handleDelete = (id: string) => {
@@ -166,13 +168,13 @@ export default function SmartTagger() {
 
 	const confirmDelete = () => {
 		if (deleteId) {
-			fetcher.submit({ actionType: "deleteRule", id: deleteId }, { method: "post" });
+			submit({ actionType: "deleteRule", id: deleteId }, { method: "post" });
 			setDeleteId(null);
 		}
 	};
 
 	const handleImport = (rule: TaggingRule) => {
-		fetcher.submit({ actionType: "importRule", ruleData: JSON.stringify(rule) }, { method: "post" });
+		submit({ actionType: "importRule", ruleData: JSON.stringify(rule) }, { method: "post" });
 	};
 
 
@@ -184,17 +186,26 @@ export default function SmartTagger() {
 			primaryAction={selectedTab === 0 ? { content: "Create Rule", onAction: handleCreate, icon: PlusIcon } : undefined}
 		>
 			<Layout>
-				<Layout.Section>
-					{isLimitReached && (
-						<Box paddingBlockEnd="400">
-							<Banner tone="warning" title="Free Plan Limit Reached">
-								<Text as="p">
-									You have reached the limit of 5 active rules. Upgrade to Pro to enable more.
-								</Text>
-							</Banner>
-						</Box>
-					)}
+				{actionData?.status === "error" && actionData?.message && (
+					<Layout.Section>
+						<Banner tone="critical" title="Error">
+							<Text as="p">
+								{actionData?.message}
+							</Text>
+						</Banner>
+					</Layout.Section>
+				)}
+				{isLimitReached && (
+					<Layout.Section>
+						<Banner tone="warning" title="Free Plan Limit Reached">
+							<Text as="p">
+								You have reached the limit of 5 active rules. Upgrade to Pro to enable more.
+							</Text>
+						</Banner>
+					</Layout.Section>
+				)}
 
+				<Layout.Section>
 					<Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange}>
 						<Card padding="0">
 							<Box padding="400" borderBlockEndWidth="025" borderColor="border">

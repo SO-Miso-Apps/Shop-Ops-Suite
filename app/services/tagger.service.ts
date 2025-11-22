@@ -38,6 +38,14 @@ export class TaggerService {
         }
     }
 
+    static async toggleRule(shop: string, id: string, isEnabled: boolean) {
+        return await TaggingRule.findOneAndUpdate(
+            { shop, _id: id },
+            { isEnabled },
+            { new: true }
+        );
+    }
+
     static async deleteRule(shop: string, id: string) {
         return await TaggingRule.findOneAndDelete({ shop, _id: id });
     }

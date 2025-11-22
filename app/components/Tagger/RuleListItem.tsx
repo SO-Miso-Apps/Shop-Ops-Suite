@@ -6,7 +6,7 @@ interface RuleListItemProps {
   selectedTab: number;
   limited: boolean;
   onEdit?: (rule: TaggingRule) => void;
-  onToggle?: (rule: TaggingRule) => void;
+  onToggle?: (id: string, currentStatus: boolean) => void;
   onDelete?: (id: string) => void;
   onImport?: (rule: TaggingRule) => void;
 }
@@ -31,7 +31,7 @@ export function RuleListItem({
       return [
         {
           content: rule.isEnabled ? 'Turn Off' : 'Turn On',
-          onAction: () => onToggle?.(rule),
+          onAction: () => onToggle?.(rule._id!, rule.isEnabled),
           disabled: !rule.isEnabled && limited,
         },
         {
