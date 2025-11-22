@@ -36,4 +36,5 @@ export interface MetafieldFormErrors {
   namespace?: string;
   key?: string;
   value?: string;
+  common?: string;
 }

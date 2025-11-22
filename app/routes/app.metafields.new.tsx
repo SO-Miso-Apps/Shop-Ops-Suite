@@ -62,7 +62,6 @@ export default function NewMetafieldRule() {
   const shopify = useAppBridge();
   const actionData = useActionData<typeof action>();
   const fetcher = useFetcher();
-  const { isLimitReached } = useLoaderData<typeof loader>();
 
   const [aiPrompt, setAiPrompt] = useState("");
 
@@ -70,6 +69,7 @@ export default function NewMetafieldRule() {
     formData,
     setFormData,
     errors,
+    setErrors,
     validateForm,
     initCreateForm
   } = useMetafieldForm();
@@ -96,7 +96,9 @@ export default function NewMetafieldRule() {
         navigate("/app/metafields");
       }
     } else if ((actionData as any)?.status === "error" || (fetcher.data as any)?.status === "error") {
-      shopify.toast.show((actionData as any)?.message || (fetcher.data as any)?.message || "An error occurred", { isError: true });
+      setErrors({
+        common: (actionData as any)?.message || (fetcher.data as any)?.message || "An error occurred"
+      });
     }
   }, [actionData, fetcher.data, shopify, navigate]);
 

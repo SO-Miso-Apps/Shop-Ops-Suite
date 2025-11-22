@@ -32,4 +32,5 @@ export interface TaggerFormErrors {
   resourceType?: string;
   conditions?: string;
   tags?: string;
+  common?: string;
 }

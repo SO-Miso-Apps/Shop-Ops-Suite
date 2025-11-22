@@ -1,4 +1,5 @@
 import {
+  Banner,
   BlockStack,
   Box,
   Button,
@@ -69,6 +70,11 @@ export function MetafieldFormModal({
     >
       <Modal.Section>
         <BlockStack gap="500">
+          {errors.common && (
+            <Banner tone="critical">
+              {errors.common}
+            </Banner>
+          )}
           {/* AI Generator */}
           <Box background="bg-surface-secondary" padding="400" borderRadius="200">
             <BlockStack gap="300">

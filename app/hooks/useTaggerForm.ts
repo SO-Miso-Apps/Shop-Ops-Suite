@@ -71,6 +71,7 @@ export function useTaggerForm() {
     formData,
     setFormData,
     errors,
+    setErrors,
     validateForm,
     resetForm,
     initCreateForm,

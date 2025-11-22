@@ -74,6 +74,7 @@ export function useMetafieldForm() {
     formData,
     setFormData,
     errors,
+    setErrors,
     validateForm,
     resetForm,
     initCreateForm,
