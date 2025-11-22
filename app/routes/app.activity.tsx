@@ -1,31 +1,31 @@
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigate, useSearchParams, useRevalidator } from "@remix-run/react";
+import { type ActionFunctionArgs, json, type LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useNavigate, useRevalidator, useSearchParams, useSubmit } from "@remix-run/react";
 import {
-	Page,
-	Layout,
-	Card,
-	IndexTable,
-	Text,
+	ActionList,
 	Badge,
+	Button,
+	ButtonGroup,
+	Card,
 	ChoiceList,
 	IndexFilters,
 	type IndexFiltersProps,
-	useSetIndexFiltersMode,
-	Button,
-	Tooltip,
+	IndexTable,
+	Layout,
 	List,
+	Modal,
+	Page,
 	Pagination,
 	Popover,
-	ActionList,
-	Icon,
-	ButtonGroup,
+	Text,
+	Tooltip,
+	useSetIndexFiltersMode
 } from "@shopify/polaris";
 import { CalendarIcon } from '@shopify/polaris-icons';
 import { useCallback, useEffect, useState } from "react";
-import { authenticate } from "../shopify.server";
+import { Backup } from "../models/Backup";
 import { ActivityService } from "../services/activity.service";
 import { RevertService } from "../services/revert.service";
-import { Backup } from "../models/Backup";
+import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 	const { session } = await authenticate.admin(request);
@@ -128,6 +128,7 @@ export default function Activity() {
 	const [searchParams] = useSearchParams();
 	const revalidator = useRevalidator();
 	const [datePopoverActive, setDatePopoverActive] = useState(false);
+	const [revertJobId, setRevertJobId] = useState<string | null>(null);
 
 	useEffect(() => {
 		const interval = setInterval(() => {
@@ -201,7 +202,7 @@ export default function Activity() {
 			}
 		}
 
-		navigate(`?${params.toString()}`, { replace: true });
+		navigate(`? ${params.toString()} `, { replace: true });
 	}, [navigate, searchParams]);
 
 	const handleFiltersQueryChange = useCallback(
@@ -227,8 +228,13 @@ export default function Activity() {
 	}, [navigate]);
 
 	const handleRevert = (jobId: string) => {
-		if (confirm("Are you sure you want to revert this bulk operation? This will restore the original tags.")) {
-			submit({ actionType: "revert", jobId }, { method: "post" });
+		setRevertJobId(jobId);
+	};
+
+	const confirmRevert = () => {
+		if (revertJobId) {
+			submit({ actionType: "revert", jobId: revertJobId }, { method: "post" });
+			setRevertJobId(null);
 		}
 	};
 
@@ -259,7 +265,7 @@ export default function Activity() {
 	if (currentStatus.length > 0) {
 		appliedFilters.push({
 			key: 'status',
-			label: `Status: ${currentStatus.join(', ')}`,
+			label: `Status: ${currentStatus.join(', ')} `,
 			onRemove: () => handleStatusFilterChange([]),
 		});
 	}
@@ -456,6 +462,29 @@ export default function Activity() {
 					</Card>
 				</Layout.Section>
 			</Layout>
+
+			<Modal
+				open={!!revertJobId}
+				onClose={() => setRevertJobId(null)}
+				title="Confirm Revert"
+				primaryAction={{
+					content: 'Revert',
+					onAction: confirmRevert,
+					destructive: true,
+				}}
+				secondaryActions={[
+					{
+						content: 'Cancel',
+						onAction: () => setRevertJobId(null),
+					},
+				]}
+			>
+				<Modal.Section>
+					<Text as="p">
+						Are you sure you want to revert this bulk operation? This will restore the original tags.
+					</Text>
+				</Modal.Section>
+			</Modal>
 		</Page>
 	);
 }

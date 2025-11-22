@@ -1,5 +1,5 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useActionData, useFetcher, useNavigate, useLoaderData } from "@remix-run/react";
+import { useActionData, useFetcher, useNavigate } from "@remix-run/react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { useEffect, useState } from "react";
 import { RuleFormModal } from "~/components/Tagger/RuleFormModal";

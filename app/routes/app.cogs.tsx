@@ -1,41 +1,30 @@
-import { useState, useEffect, useCallback } from "react";
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useFetcher, useRevalidator } from "@remix-run/react";
+import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
+import { useActionData, useLoaderData, useNavigation, useSearchParams, useSubmit } from "@remix-run/react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import {
-	Page,
-	Layout,
-	Card,
-	IndexTable,
-	TextField,
-	Text,
-	Badge,
-	useIndexResourceState,
-	Button,
-	BlockStack,
-	InlineStack,
 	Banner,
-	Pagination,
+	BlockStack,
 	Box,
+	Button,
+	Card,
 	IndexFilters,
-	useSetIndexFiltersMode,
-	type IndexFiltersProps,
-	IndexFiltersMode,
-	ChoiceList,
+	IndexTable,
+	InlineStack,
+	Layout,
+	Page,
+	Text,
+	useSetIndexFiltersMode
 } from "@shopify/polaris";
-import { authenticate } from "../shopify.server";
-import { useSearchParams } from "@remix-run/react";
-import { CogsService } from "~/services/cogs.service";
-import { ActivityService } from "~/services/activity.service";
 import {
-	ExportIcon,
-	ImportIcon,
-	MagicIcon,
-	ArrowUpIcon,
 	AlertCircleIcon,
-	MoneyFilledIcon,
-	RefreshIcon,
-	SearchIcon
+	ArrowUpIcon,
+	MagicIcon,
+	MoneyFilledIcon
 } from "@shopify/polaris-icons";
+import { useCallback, useEffect, useState } from "react";
+import { ActivityService } from "~/services/activity.service";
+import { CogsService } from "~/services/cogs.service";
+import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 	const { admin, session } = await authenticate.admin(request);
@@ -100,15 +89,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 	return json({ status: "ignored" });
 };
 
-import { ProductRow, type ProductData } from "../components/Cogs/ProductRow";
 import { BulkApplyModal } from "../components/Cogs/BulkApplyModal";
+import { ProductRow, type ProductData } from "../components/Cogs/ProductRow";
 
 export default function COGS() {
 	const { products: initialProducts, pageInfo, currencyCode, isFreePlan, recentActivities, stats } = useLoaderData<typeof loader>();
+	const actionData = useActionData<{ status: string, errors?: string[] }>();
+	const shopify = useAppBridge();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const submit = useSubmit();
 	const nav = useNavigation();
-	const revalidator = useRevalidator();
 	const isSaving = nav.state === "submitting";
 
 	// Local state for optimistic updates
@@ -154,6 +144,15 @@ export default function COGS() {
 		setProducts(initialProducts);
 		setHasChanges(false);
 	}, [initialProducts]);
+
+	// Handle action responses
+	useEffect(() => {
+		if (actionData?.status === "success") {
+			shopify.toast.show("Costs updated successfully");
+		} else if (actionData?.status === "error") {
+			shopify.toast.show("Failed to update costs", { isError: true });
+		}
+	}, [actionData, shopify]);
 
 	const resourceName = {
 		singular: 'product',
@@ -277,9 +276,17 @@ export default function COGS() {
 			]}
 		>
 			<Layout>
+				{actionData?.status === "error" && actionData?.errors && (
+					<Layout.Section>
+						<Banner tone="critical" title="Error updating costs">
+							<Text as="p">
+								{actionData.errors.length} error(s) occurred while updating costs. Please review and try again.
+							</Text>
+						</Banner>
+					</Layout.Section>
+				)}
 				{isFreePlan && (
 					<Layout.Section>
-
 						<Box paddingBlockStart="400">
 							<Banner tone="info">
 								<Text as="p">
@@ -332,7 +339,7 @@ export default function COGS() {
 											<div style={{ width: 20, height: 20 }}><AlertCircleIcon /></div>
 										</Box>
 									</InlineStack>
-									<Text variant="headingLg" as="p" tone="critical">{stats.missingCosts} Products</Text>
+									<Text variant="headingLg" as="p" tone="critical">{stats.missingCosts} Variants</Text>
 								</BlockStack>
 							</Card>
 						</div>

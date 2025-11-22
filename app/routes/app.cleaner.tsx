@@ -1,5 +1,6 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { useActionData, useNavigation, useSubmit, useLoaderData, Link } from "@remix-run/react";
+import { Link, useActionData, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import {
   Banner,
   BlockStack,
@@ -13,23 +14,19 @@ import {
 } from "@shopify/polaris";
 import {
   AlertCircleIcon,
-  CheckIcon,
-  DeleteIcon,
   DuplicateIcon,
-  MagicIcon,
   SearchIcon
 } from "@shopify/polaris-icons";
-import { ActivityService } from "../services/activity.service";
 import { useEffect, useState } from "react";
 import { CleanConfirmModal } from "~/components/Cleaner/CleanConfirmModal";
 import { TagSelectionCard } from "~/components/Cleaner/TagSelectionCard";
 import { useCleanerState } from "~/hooks/useCleanerState";
 import type { CleanerActionData } from "~/types/cleaner.types";
-import { authenticate } from "../shopify.server";
-import { cleanerQueue } from "../queue.server";
-import { useAppBridge } from "@shopify/app-bridge-react";
-import { UsageService } from "../services/usage.service";
 import { generateJobId } from "~/utils/id-generator";
+import { cleanerQueue } from "../queue.server";
+import { ActivityService } from "../services/activity.service";
+import { UsageService } from "../services/usage.service";
+import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: { request: Request }) => {
   const { session } = await authenticate.admin(request);

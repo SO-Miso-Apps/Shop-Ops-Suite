@@ -11,6 +11,11 @@ import {
 	ProgressBar,
 	Text
 } from "@shopify/polaris";
+import {
+	DeleteIcon,
+	PlusIcon,
+	ReplaceIcon
+} from "@shopify/polaris-icons";
 import { useEffect, useState } from "react";
 import { BulkOperationForm } from "~/components/Bulk/BulkOperationForm";
 import { BulkPreviewModal } from "~/components/Bulk/BulkPreviewModal";
@@ -22,15 +27,6 @@ import { ActivityService } from "../services/activity.service";
 import { dryRunTagOperation } from "../services/bulk.server";
 import { UsageService } from "../services/usage.service";
 import { authenticate } from "../shopify.server";
-import {
-	ArchiveIcon,
-	DeleteIcon,
-	DuplicateIcon,
-	EditIcon,
-	MagicIcon,
-	PlusIcon,
-	ReplaceIcon
-} from "@shopify/polaris-icons";
 
 export const loader = async ({ request }: { request: Request }) => {
 	const { session, admin } = await authenticate.admin(request);

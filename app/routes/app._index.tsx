@@ -4,31 +4,25 @@ import {
   BlockStack,
   Box,
   Button,
-  CalloutCard,
   Card,
   Divider,
+  EmptyState,
   Icon,
   InlineGrid,
   Layout,
   Page,
-  Text,
-  Tooltip,
-  Badge,
-  IndexTable,
-  EmptyState,
-  Link,
+  Text
 } from "@shopify/polaris";
 import {
-  OrderFilledIcon,
-  ProductFilledIcon,
+  AlertCircleIcon,
+  CheckIcon,
   ClockIcon,
-  PlusIcon,
   DeleteIcon,
   EditIcon,
-  CheckIcon,
-  AlertCircleIcon,
   InfoIcon,
-  ArrowRightIcon
+  OrderFilledIcon,
+  PlusIcon,
+  ProductFilledIcon
 } from "@shopify/polaris-icons";
 import { useEffect, useState } from "react";
 import { DashboardService } from "../services/dashboard.service";
